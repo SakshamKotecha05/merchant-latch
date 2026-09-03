@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from urllib.parse import unquote
 
 from pydantic import BaseModel, ConfigDict, PostgresDsn, SecretStr, ValidationError
 
@@ -9,7 +8,6 @@ from acsa.database_urls import has_identity_query_override, has_percent_encoded_
 
 REQUIRED_GATEWAY_KEYS = (
     "DATABASE_URL",
-    "DATABASE_DIRECT_URL",
     "RAZORPAY_KEY_ID",
     "RAZORPAY_KEY_SECRET",
     "RAZORPAY_WEBHOOK_SECRET",
@@ -26,7 +24,6 @@ class GatewaySettings(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     database_url: PostgresDsn
-    database_direct_url: PostgresDsn
     razorpay_key_id: str
     razorpay_key_secret: SecretStr
     razorpay_webhook_secret: SecretStr
@@ -43,7 +40,6 @@ def load_gateway_settings(environment: Mapping[str, str]) -> GatewaySettings:
         settings = GatewaySettings.model_validate(
             {
                 "database_url": environment["DATABASE_URL"],
-                "database_direct_url": environment["DATABASE_DIRECT_URL"],
                 "razorpay_key_id": environment["RAZORPAY_KEY_ID"],
                 "razorpay_key_secret": environment["RAZORPAY_KEY_SECRET"],
                 "razorpay_webhook_secret": environment["RAZORPAY_WEBHOOK_SECRET"],
@@ -57,36 +53,18 @@ def load_gateway_settings(environment: Mapping[str, str]) -> GatewaySettings:
             f"Invalid configuration fields: {', '.join(invalid_fields)}"
         ) from None
 
-    if has_identity_query_override(settings.database_url) or has_identity_query_override(
-        settings.database_direct_url
-    ):
+    if has_identity_query_override(settings.database_url):
         raise ConfigurationError(
             "Database connection URLs must not include identity override parameters"
         )
-    if has_percent_encoded_database_path(
-        settings.database_url
-    ) or has_percent_encoded_database_path(settings.database_direct_url):
+    if has_percent_encoded_database_path(settings.database_url):
         raise ConfigurationError(
             "Database connection URLs must not include percent-encoded database path components"
         )
-    runtime_username = _decoded_url_component(settings.database_url.hosts()[0]["username"])
-    owner_username = _decoded_url_component(settings.database_direct_url.hosts()[0]["username"])
-    if settings.database_url == settings.database_direct_url or runtime_username == owner_username:
-        raise ConfigurationError(
-            "DATABASE_URL and DATABASE_DIRECT_URL must use distinct database roles"
-        )
-    if _database_name(settings.database_url) != _database_name(settings.database_direct_url):
-        raise ConfigurationError(
-            "DATABASE_URL and DATABASE_DIRECT_URL must identify the same database"
-        )
 
-    return settings
+    database_url = settings.database_url
+    if database_url.scheme in {"postgres", "postgresql"}:
+        _, separator, connection_details = database_url.unicode_string().partition("://")
+        database_url = PostgresDsn(f"postgresql+psycopg{separator}{connection_details}")
 
-
-def _decoded_url_component(value: str | None) -> str | None:
-    return unquote(value) if value is not None else None
-
-
-def _database_name(url: PostgresDsn) -> str | None:
-    path = url.path
-    return _decoded_url_component(path.lstrip("/")) if path is not None else None
+    return settings.model_copy(update={"database_url": database_url})
