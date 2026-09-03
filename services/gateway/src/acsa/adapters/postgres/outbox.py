@@ -3,10 +3,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from acsa.adapters.postgres.models import OutboxJob
@@ -48,7 +48,6 @@ class PostgresOutboxStore:
         return job_id
 
     async def pending_dispatch_ids(self, *, limit: int) -> list[UUID]:
-        now = datetime.now(UTC)
         async with self._session_factory() as session:
             result = await session.scalars(
                 select(OutboxJob.id)
@@ -56,7 +55,7 @@ class PostgresOutboxStore:
                     OutboxJob.dispatched_at.is_(None),
                     OutboxJob.completed_at.is_(None),
                     OutboxJob.dead_lettered_at.is_(None),
-                    OutboxJob.available_at <= now,
+                    OutboxJob.available_at <= func.now(),
                 )
                 .order_by(OutboxJob.available_at, OutboxJob.id)
                 .limit(limit)
@@ -85,8 +84,8 @@ class PostgresOutboxStore:
         worker_id: str,
         lease_seconds: int = 30,
     ) -> ClaimedOutboxJob | None:
-        now = datetime.now(UTC)
         async with self._session_factory() as session, session.begin():
+            now = cast(datetime, await session.scalar(select(func.now())))
             job = await session.scalar(
                 select(OutboxJob)
                 .where(
