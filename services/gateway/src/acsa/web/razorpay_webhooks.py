@@ -73,7 +73,6 @@ def create_razorpay_webhook_router(
             except Exception:
                 LOGGER.warning(
                     "Webhook job dispatch failed after durable commit",
-                    extra={"job_id": str(result.job_id)},
                 )
 
         return Response(status_code=status.HTTP_204_NO_CONTENT)

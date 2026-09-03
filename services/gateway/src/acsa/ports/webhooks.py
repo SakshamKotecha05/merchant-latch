@@ -20,3 +20,7 @@ class WebhookStorePort(Protocol):
         raw_payload: bytes,
         payload_hash: str,
     ) -> WebhookInsertResult: ...
+
+
+class WebhookProcessingStorePort(Protocol):
+    async def mark_processed(self, webhook_event_id: UUID) -> bool: ...

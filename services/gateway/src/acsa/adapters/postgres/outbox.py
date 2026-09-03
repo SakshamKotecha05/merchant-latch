@@ -6,10 +6,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from acsa.adapters.postgres.models import OutboxJob
+from acsa.ports.jobs import OutboxClaimResult, OutboxClaimState
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,25 +84,28 @@ class PostgresOutboxStore:
         job_id: UUID,
         worker_id: str,
         lease_seconds: int = 30,
-    ) -> ClaimedOutboxJob | None:
+    ) -> OutboxClaimResult:
         async with self._session_factory() as session, session.begin():
             now = cast(datetime, await session.scalar(select(func.now())))
             job = await session.scalar(
                 select(OutboxJob)
                 .where(
                     OutboxJob.id == job_id,
-                    OutboxJob.completed_at.is_(None),
-                    OutboxJob.dead_lettered_at.is_(None),
-                    OutboxJob.available_at <= now,
-                    or_(
-                        OutboxJob.lock_expires_at.is_(None),
-                        OutboxJob.lock_expires_at <= now,
-                    ),
                 )
                 .with_for_update(skip_locked=True)
             )
-            if job is None or job.attempt_count >= job.max_attempts:
-                return None
+            if job is None:
+                return OutboxClaimResult(OutboxClaimState.UNAVAILABLE)
+            if job.completed_at is not None:
+                return OutboxClaimResult(OutboxClaimState.COMPLETED)
+            if (
+                job.dead_lettered_at is not None
+                or job.available_at > now
+                or job.attempt_count >= job.max_attempts
+            ):
+                return OutboxClaimResult(OutboxClaimState.UNAVAILABLE)
+            if job.lock_expires_at is not None and job.lock_expires_at > now:
+                return OutboxClaimResult(OutboxClaimState.LEASED)
             job.locked_by = worker_id
             job.lock_expires_at = now + timedelta(seconds=lease_seconds)
             job.attempt_count += 1
@@ -113,7 +117,7 @@ class PostgresOutboxStore:
                 payload=dict(job.payload),
                 attempt_count=job.attempt_count,
             )
-        return claim
+        return OutboxClaimResult(OutboxClaimState.CLAIMED, claim)
 
     async def complete(self, *, job_id: UUID, worker_id: str) -> bool:
         async with self._session_factory() as session, session.begin():

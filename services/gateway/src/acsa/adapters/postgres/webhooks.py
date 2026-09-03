@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import orjson
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -56,6 +57,24 @@ class PostgresWebhookStore:
             )
 
         return WebhookInsertResult(created=True, job_id=job_id)
+
+    async def mark_processed(self, webhook_event_id: UUID) -> bool:
+        async with self._session_factory() as session, session.begin():
+            result = await session.execute(
+                update(WebhookEvent)
+                .where(
+                    WebhookEvent.id == webhook_event_id,
+                    WebhookEvent.processed_at.is_(None),
+                )
+                .values(processed_at=func.now())
+                .returning(WebhookEvent.id)
+            )
+            if result.scalar_one_or_none() is not None:
+                return True
+            existing_id = await session.scalar(
+                select(WebhookEvent.id).where(WebhookEvent.id == webhook_event_id)
+            )
+            return existing_id is not None
 
 
 def _extract_provider_references(raw_payload: bytes) -> tuple[str | None, str | None]:
