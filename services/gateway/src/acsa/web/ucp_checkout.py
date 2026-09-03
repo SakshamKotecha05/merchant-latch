@@ -11,7 +11,7 @@ import httpx
 import orjson
 from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from acsa.domain.ucp_checkout import SHOPPING_SERVICE_PATH, UCP_VERSION, create_escalated_checkout
 from acsa.ports.ucp_checkouts import CheckoutPersistenceOutcome, UCPCheckoutStorePort
@@ -70,6 +70,43 @@ def create_ucp_checkout_router(
                 ],
             },
             headers={"Cache-Control": "public, max-age=300"},
+        )
+
+    @router.get("/checkout/{checkout_id}")
+    async def merchant_handoff(checkout_id: str) -> HTMLResponse:
+        return HTMLResponse(
+            """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Merchant review required | MerchantLatch</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+    body { align-items: center; background: #0f172a; color: #f8fafc; display: flex; margin: 0;
+      min-height: 100dvh; padding: 24px; }
+    main { margin: auto; max-width: 40rem; width: 100%; }
+    section { border: 1px solid #334155; border-radius: 16px; padding: clamp(24px, 6vw, 48px); }
+    p { color: #cbd5e1; font-size: 1rem; line-height: 1.6; max-width: 38rem; }
+    h1 { font-size: clamp(2rem, 8vw, 4rem); letter-spacing: -0.04em; line-height: 1;
+      margin: 16px 0; }
+    .label { color: #fbbf24; font-size: 0.875rem; font-weight: 700; letter-spacing: 0.08em;
+      text-transform: uppercase; }
+  </style>
+</head>
+<body>
+  <main>
+    <section aria-labelledby="review-heading">
+      <p class="label">MerchantLatch</p>
+      <h1 id="review-heading">Merchant review required</h1>
+      <p>This checkout needs merchant approval before any payment action can continue.</p>
+      <p>For your security, checkout and payment details are available only in the merchant’s
+      authenticated workflow.</p>
+    </section>
+  </main>
+</body>
+</html>""",
+            headers={"Cache-Control": "no-store"},
         )
 
     @router.post(f"{SHOPPING_SERVICE_PATH}/checkout-sessions")
