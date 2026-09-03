@@ -3,15 +3,20 @@ from __future__ import annotations
 import os
 
 import inngest
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.serialization import load_pem_private_key
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from acsa.adapters.inngest.dispatcher import InngestJobDispatcher
 from acsa.adapters.postgres.outbox import PostgresOutboxStore
+from acsa.adapters.postgres.ucp_checkouts import PostgresUCPCheckoutStore
 from acsa.adapters.postgres.webhooks import PostgresWebhookStore
 from acsa.application import create_application
-from acsa.config import load_gateway_settings
+from acsa.config import ConfigurationError, load_gateway_settings
 from acsa.inngest_functions import create_outbox_ready_function, create_outbox_sweep_function
+from acsa.security.ucp_signatures import import_public_jwk
+from acsa.web.ucp_checkout import create_ucp_checkout_router
 
 
 def create_runtime_application() -> FastAPI:
@@ -26,7 +31,7 @@ def create_runtime_application() -> FastAPI:
         signing_key=settings.inngest_signing_key.get_secret_value(),
     )
 
-    return create_application(
+    app = create_application(
         webhook_secret=settings.razorpay_webhook_secret.get_secret_value(),
         webhook_store=webhook_store,
         job_dispatcher=InngestJobDispatcher(inngest_client, outbox_store),
@@ -41,6 +46,26 @@ def create_runtime_application() -> FastAPI:
             ),
         ],
     )
+    merchant_private_key = load_pem_private_key(
+        settings.ucp_merchant_private_key.get_secret_value().encode("utf-8"),
+        password=None,
+    )
+    if not isinstance(merchant_private_key, ec.EllipticCurvePrivateKey) or not isinstance(
+        merchant_private_key.curve, ec.SECP256R1
+    ):
+        raise ConfigurationError("UCP_MERCHANT_PRIVATE_KEY must contain a P-256 private key")
+    app.include_router(
+        create_ucp_checkout_router(
+            store=PostgresUCPCheckoutStore(session_factory),
+            buyer_public_key=import_public_jwk(settings.ucp_buyer_public_jwk),
+            buyer_key_id=settings.ucp_buyer_key_id,
+            merchant_private_key=merchant_private_key,
+            merchant_key_id=settings.ucp_merchant_key_id,
+            public_gateway_url=str(settings.public_gateway_url),
+            public_merchant_url=str(settings.public_merchant_url),
+        )
+    )
+    return app
 
 
 app: FastAPI = create_runtime_application()
