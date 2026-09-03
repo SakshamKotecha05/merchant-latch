@@ -4,7 +4,17 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import CheckConstraint, DateTime, Integer, String, Text, func
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Integer,
+    LargeBinary,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PostgresUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -62,4 +72,60 @@ class OutboxJob(Base):
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
+    )
+
+
+class UCPCheckout(Base):
+    __tablename__ = "ucp_checkouts"
+    __table_args__ = (
+        CheckConstraint("status = 'requires_escalation'", name="ck_ucp_checkout_initial_status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    buyer_key_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    continue_url: Mapped[str] = mapped_column(Text, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    resource: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    response_body: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class UCPRequestNonce(Base):
+    __tablename__ = "ucp_request_nonces"
+
+    buyer_key_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    nonce: Mapped[str] = mapped_column(String(255), primary_key=True)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    checkout_id: Mapped[str] = mapped_column(
+        ForeignKey("ucp_checkouts.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class UCPIdempotencyRecord(Base):
+    __tablename__ = "ucp_idempotency_records"
+    __table_args__ = (
+        UniqueConstraint("buyer_key_id", "idempotency_key", name="uq_ucp_idempotency_key"),
+    )
+
+    buyer_key_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    idempotency_key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    request_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    checkout_id: Mapped[str] = mapped_column(
+        ForeignKey("ucp_checkouts.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )
