@@ -12,6 +12,9 @@ It verifies Razorpay webhooks, records accepted events durably in PostgreSQL, an
 - Restricted PostgreSQL runtime role with separate owner credentials for migrations.
 - Outbox dispatch and an Inngest function mounted at `/api/inngest`.
 - FastAPI liveness endpoint at `/health/live`.
+- Public UCP discovery at `/.well-known/ucp`.
+- Signed UCP checkout creation and retrieval with durable nonce and idempotency replay protection.
+- Merchant-controlled escalation handoff without creating a payment or order.
 
 ## Requirements
 
@@ -42,11 +45,20 @@ RAZORPAY_KEY_SECRET
 RAZORPAY_WEBHOOK_SECRET
 INNGEST_EVENT_KEY
 INNGEST_SIGNING_KEY
+UCP_BUYER_PUBLIC_JWK
+UCP_BUYER_KEY_ID
+UCP_MERCHANT_PRIVATE_KEY
+UCP_MERCHANT_KEY_ID
+PUBLIC_GATEWAY_URL
+PUBLIC_MERCHANT_URL
 ```
 
 `DATABASE_URL` must authenticate as the restricted application role.
 `DATABASE_DIRECT_URL` must authenticate as a different owner role against the same database.
 Do not commit either connection URL or any provider secret.
+`UCP_BUYER_PUBLIC_JWK` must contain the trusted buyer's public P-256 JWK and its `kid` must equal `UCP_BUYER_KEY_ID`.
+`UCP_MERCHANT_PRIVATE_KEY` must contain the merchant's P-256 signing key and must never be committed.
+`PUBLIC_GATEWAY_URL` and `PUBLIC_MERCHANT_URL` must be absolute HTTPS URLs in deployed environments.
 
 ## Prepare PostgreSQL
 
@@ -87,3 +99,15 @@ Expected response:
 ```
 
 Configure Razorpay to send signed events to `/webhooks/razorpay` on the public gateway URL.
+
+## Verify UCP discovery locally
+
+After starting the gateway with valid UCP settings, fetch its profile:
+
+```bash
+curl http://localhost:8000/.well-known/ucp
+```
+
+The response advertises the REST shopping service at `/ucp/shopping` and the `dev.ucp.shopping.checkout` capability.
+Local HTTP is for development only.
+The public profile endpoint must use HTTPS and must not redirect.
