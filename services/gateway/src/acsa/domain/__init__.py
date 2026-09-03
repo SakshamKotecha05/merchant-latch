@@ -1,0 +1,1 @@
+"""Deterministic merchant domain primitives."""

@@ -1,0 +1,25 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: acsa
+      POSTGRES_USER: acsa_owner
+      POSTGRES_PASSWORD: local-only-owner-password
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U acsa_owner -d acsa"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+    volumes:
+      - acsa_postgres:/var/lib/postgresql/data
+
+  mailpit:
+    image: axllent/mailpit:v1.27
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+volumes:
+  acsa_postgres:

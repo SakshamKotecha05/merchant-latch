@@ -1,0 +1,1 @@
+"""Razorpay payment-provider adapter."""
