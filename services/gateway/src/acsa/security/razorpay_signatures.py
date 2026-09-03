@@ -6,7 +6,10 @@ import hmac
 
 def _verify_hex_hmac(*, message: bytes, signature: str, secret: str) -> bool:
     expected = hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, signature)
+    try:
+        return hmac.compare_digest(expected, signature)
+    except TypeError:
+        return False
 
 
 def verify_checkout_signature(
