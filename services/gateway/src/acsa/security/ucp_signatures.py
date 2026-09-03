@@ -8,7 +8,8 @@ import hashlib
 import hmac
 import time
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timedelta
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
 import httpx
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -45,6 +46,14 @@ class UCPVerificationError(ValueError):
     def __init__(self, code: str) -> None:
         self.code = code
         super().__init__(_ERROR_MESSAGES.get(code, "Message verification failed."))
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedUCPRequest:
+    """Signature metadata that is safe to consume after verification succeeds."""
+
+    nonce: str
+    expires_at: datetime
 
 
 class _SingleKeyResolver(HTTPSignatureKeyResolver):
@@ -317,7 +326,7 @@ def _parse_signature_metadata(
     *,
     expected_key_id: str,
     require_nonce: bool,
-) -> tuple[str, ...]:
+) -> tuple[tuple[str, ...], VerifiedUCPRequest | None]:
     if "Signature-Input" not in message.headers or "Signature" not in message.headers:
         raise UCPVerificationError("signature_missing")
     try:
@@ -361,11 +370,18 @@ def _parse_signature_metadata(
         raise UCPVerificationError("signature_expired")
     if expires <= created:
         raise UCPVerificationError("signature_invalid")
-    if require_nonce:
-        nonce = parameters.get("nonce")
-        if not isinstance(nonce, str) or not nonce:
-            raise UCPVerificationError("signature_invalid")
-    return tuple(components)
+    nonce = parameters.get("nonce")
+    if require_nonce and (not isinstance(nonce, str) or not nonce):
+        raise UCPVerificationError("signature_invalid")
+    verified_request = (
+        VerifiedUCPRequest(
+            nonce=nonce,
+            expires_at=datetime.fromtimestamp(expires, UTC),
+        )
+        if isinstance(nonce, str)
+        else None
+    )
+    return tuple(components), verified_request
 
 
 def _verify(
@@ -375,9 +391,9 @@ def _verify(
     expected_key_id: str,
     expected_components: tuple[str, ...],
     require_nonce: bool,
-) -> None:
+) -> VerifiedUCPRequest | None:
     _validate_public_key(public_key)
-    components = _parse_signature_metadata(
+    components, verified_request = _parse_signature_metadata(
         message,
         expected_key_id=expected_key_id,
         require_nonce=require_nonce,
@@ -394,6 +410,7 @@ def _verify(
         raise
     except HTTPMessageSignaturesException as error:
         raise UCPVerificationError("signature_invalid") from error
+    return verified_request
 
 
 def verify_request(
@@ -401,7 +418,7 @@ def verify_request(
     *,
     public_key: ec.EllipticCurvePublicKey,
     expected_key_id: str,
-) -> None:
+) -> VerifiedUCPRequest:
     """Verify the digest, UCP metadata, components, key ID, and request signature."""
     body = _body_bytes(request)
     if body:
@@ -410,13 +427,16 @@ def verify_request(
         components = _request_components(request, body)
     except ValueError as error:
         raise UCPVerificationError("components_invalid") from error
-    _verify(
+    verified_request = _verify(
         request,
         public_key=public_key,
         expected_key_id=expected_key_id,
         expected_components=components,
         require_nonce=True,
     )
+    if verified_request is None:
+        raise AssertionError("Verified UCP requests must include a nonce.")
+    return verified_request
 
 
 def verify_response(
