@@ -24,7 +24,7 @@ export type GeminiInteractionRequest = Readonly<{
 export interface GeminiInteractionClient {
   create(
     request: GeminiInteractionRequest,
-    options: Readonly<{ timeout_ms: 5_000; maxRetries: 0; signal: AbortSignal }>,
+    options: Readonly<{ timeout_ms: 10_000; maxRetries: 2; signal: AbortSignal }>,
   ): Promise<Readonly<{ output_text?: string }>>;
 }
 
@@ -88,9 +88,9 @@ export class GeminiIntentExtractor implements IntentExtractor {
           store: false,
         },
         {
-          timeout_ms: 5_000,
-          maxRetries: 0,
-          signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]),
+          timeout_ms: 10_000,
+          maxRetries: 2,
+          signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
         },
       );
     } catch {
