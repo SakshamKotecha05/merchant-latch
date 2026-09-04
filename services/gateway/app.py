@@ -14,16 +14,22 @@ from acsa.adapters.postgres.commerce import PostgresCommerceStore
 from acsa.adapters.postgres.outbox import PostgresOutboxStore
 from acsa.adapters.postgres.payment_finalization import PostgresPaymentFinalizationStore
 from acsa.adapters.postgres.payment_orders import PostgresPaymentOrderStore
+from acsa.adapters.postgres.refunds import PostgresRefundStore
 from acsa.adapters.postgres.webhooks import PostgresWebhookStore
 from acsa.adapters.razorpay.client import RazorpayClient
 from acsa.application import create_application
 from acsa.config import ConfigurationError, load_gateway_settings
-from acsa.inngest_functions import create_outbox_ready_function, create_outbox_sweep_function
+from acsa.inngest_functions import (
+    create_lease_expiry_function,
+    create_outbox_ready_function,
+    create_outbox_sweep_function,
+)
 from acsa.security.continue_tokens import issue_continue_token
 from acsa.security.ucp_signatures import import_public_jwk
 from acsa.services.commerce import CommerceService
 from acsa.services.payment_finalization import PaymentFinalizationService
 from acsa.services.payment_orders import PaymentOrderService
+from acsa.services.refunds import RefundService
 from acsa.web.catalog import create_catalog_router
 from acsa.web.merchant_checkout import create_merchant_checkout_router
 from acsa.web.payment_confirmation import create_payment_confirmation_router
@@ -53,6 +59,10 @@ def create_runtime_application() -> FastAPI:
         provider_account_id=settings.razorpay_key_id,
         checkout_secret=settings.razorpay_key_secret.get_secret_value(),
     )
+    refund_service = RefundService(
+        store=PostgresRefundStore(session_factory),
+        provider=provider_client,
+    )
     inngest_client = inngest.Inngest(
         app_id="acsa-gateway",
         event_key=settings.inngest_event_key.get_secret_value(),
@@ -72,12 +82,14 @@ def create_runtime_application() -> FastAPI:
                 webhook_store,
                 payment_order_service=payment_order_service,
                 payment_finalization_service=payment_finalization_service,
+                refund_service=refund_service,
             ),
             create_outbox_sweep_function(
                 inngest_client,
                 outbox_store,
                 InngestJobDispatcher(inngest_client, outbox_store),
             ),
+            create_lease_expiry_function(inngest_client, refund_service),
         ],
     )
     app.router.add_event_handler("shutdown", provider_http_client.aclose)

@@ -260,6 +260,8 @@ _ATTEMPT_TRANSITIONS = frozenset(
         (PaymentAttemptState.PAID_INVENTORY_EXCEPTION, PaymentAttemptState.REFUND_PENDING),
         (PaymentAttemptState.REFUND_PENDING, PaymentAttemptState.REFUNDED),
         (PaymentAttemptState.REFUND_PENDING, PaymentAttemptState.MANUAL_REVIEW),
+        (PaymentAttemptState.EXPIRED, PaymentAttemptState.VERIFYING),
+        (PaymentAttemptState.CANCELED, PaymentAttemptState.VERIFYING),
     }
 )
 

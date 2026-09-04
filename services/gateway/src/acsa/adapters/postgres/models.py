@@ -36,6 +36,7 @@ class WebhookEvent(Base):
     payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     payment_id: Mapped[str | None] = mapped_column(String(128))
     order_id: Mapped[str | None] = mapped_column(String(128))
+    refund_id: Mapped[str | None] = mapped_column(String(128))
     received_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -445,6 +446,32 @@ class MerchantOrder(Base):
     evidence_source: Mapped[str] = mapped_column(String(32), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class Refund(Base):
+    __tablename__ = "refunds"
+    __table_args__ = (
+        CheckConstraint("amount_minor > 0", name="ck_refund_amount_positive"),
+        CheckConstraint("currency = 'INR'", name="ck_refund_currency_inr"),
+        CheckConstraint("status IN ('pending', 'processed')", name="ck_refund_status_valid"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), primary_key=True, default=uuid4)
+    attempt_id: Mapped[str] = mapped_column(
+        ForeignKey("payment_attempts.id", ondelete="RESTRICT"), nullable=False, unique=True
+    )
+    provider_refund_id: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    provider_payment_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    receipt: Mapped[str] = mapped_column(String(40), nullable=False, unique=True)
+    amount_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
 

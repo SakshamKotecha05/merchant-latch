@@ -66,6 +66,8 @@ class PostgresPaymentFinalizationStore:
                             PaymentAttemptState.AWAITING_PAYMENT.value,
                             PaymentAttemptState.VERIFYING.value,
                             PaymentAttemptState.RECONCILING.value,
+                            PaymentAttemptState.EXPIRED.value,
+                            PaymentAttemptState.CANCELED.value,
                         ]
                     ),
                 )

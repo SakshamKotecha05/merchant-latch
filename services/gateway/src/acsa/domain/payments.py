@@ -24,3 +24,14 @@ class ProviderOrderRecord:
     currency: str
     status: str
     notes: Mapping[str, str]
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderRefundRecord:
+    refund_id: str
+    payment_id: str
+    amount_minor: int
+    currency: str
+    receipt: str
+    status: str
+    notes: Mapping[str, str]

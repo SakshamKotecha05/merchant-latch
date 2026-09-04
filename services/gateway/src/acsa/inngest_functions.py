@@ -14,8 +14,10 @@ from acsa.ports.jobs import (
 from acsa.ports.webhooks import WebhookProcessingStorePort
 from acsa.services.payment_finalization import EvidenceSource, FinalizationOutcome
 from acsa.services.payment_orders import PaymentOrderOutcome
+from acsa.services.refunds import RefundOutcome
 
 _ORDER_RETRY_DELAYS = (2, 5, 10, 20, 40)
+_REFUND_RETRY_DELAYS = (5, 15, 30, 60, 120, 300, 600)
 
 
 class PaymentOrderServicePort(Protocol):
@@ -30,12 +32,23 @@ class PaymentFinalizationServicePort(Protocol):
     ) -> FinalizationOutcome: ...
 
 
+class RefundServicePort(Protocol):
+    async def process(self, attempt_id: str) -> RefundOutcome: ...
+
+    async def reconcile_webhook(
+        self, attempt_id: str, provider_refund_id: str
+    ) -> RefundOutcome: ...
+
+    async def release_expired_leases(self, *, limit: int) -> int: ...
+
+
 def create_outbox_ready_function(
     client: inngest.Inngest,
     outbox_store: OutboxWorkerStorePort,
     webhook_store: WebhookProcessingStorePort,
     payment_order_service: PaymentOrderServicePort | None = None,
     payment_finalization_service: PaymentFinalizationServicePort | None = None,
+    refund_service: RefundServicePort | None = None,
 ) -> inngest.Function[dict[str, str]]:
     @client.create_function(
         fn_id="outbox-ready",
@@ -63,8 +76,8 @@ def create_outbox_ready_function(
             attempt_id = job.payload.get("attempt_id")
             if not isinstance(attempt_id, str) or attempt_id != job.aggregate_id:
                 raise ValueError("Invalid provider Order job payload")
-            outcome = await payment_order_service.process(attempt_id)
-            if outcome is PaymentOrderOutcome.RECONCILING:
+            order_outcome = await payment_order_service.process(attempt_id)
+            if order_outcome is PaymentOrderOutcome.RECONCILING:
                 retry_index = job.attempt_count - 1
                 if retry_index >= len(_ORDER_RETRY_DELAYS):
                     raise RuntimeError("Provider Order reconciliation exhausted")
@@ -75,7 +88,30 @@ def create_outbox_ready_function(
                 ):
                     raise RuntimeError("Unable to reschedule outbox job")
                 return {"status": "retry_scheduled"}
-            if outcome is PaymentOrderOutcome.NOT_FOUND:
+            if order_outcome is PaymentOrderOutcome.NOT_FOUND:
+                raise ValueError("Referenced payment attempt does not exist")
+            if not await outbox_store.complete(job_id=job.id, worker_id=context.run_id):
+                raise RuntimeError("Unable to complete outbox job")
+            return {"status": "completed"}
+        if job.job_type == "refund_captured_payment":
+            if refund_service is None:
+                raise ValueError("Refund service is unavailable")
+            attempt_id = job.payload.get("attempt_id")
+            if not isinstance(attempt_id, str) or attempt_id != job.aggregate_id:
+                raise ValueError("Invalid refund job payload")
+            refund_outcome = await refund_service.process(attempt_id)
+            if refund_outcome in {RefundOutcome.RETRY, RefundOutcome.PENDING}:
+                retry_index = job.attempt_count - 1
+                if retry_index >= len(_REFUND_RETRY_DELAYS):
+                    raise RuntimeError("Refund reconciliation exhausted")
+                if not await outbox_store.reschedule(
+                    job_id=job.id,
+                    worker_id=context.run_id,
+                    delay_seconds=_REFUND_RETRY_DELAYS[retry_index],
+                ):
+                    raise RuntimeError("Unable to reschedule outbox job")
+                return {"status": "retry_scheduled"}
+            if refund_outcome is RefundOutcome.NOT_FOUND:
                 raise ValueError("Referenced payment attempt does not exist")
             if not await outbox_store.complete(job_id=job.id, worker_id=context.run_id):
                 raise RuntimeError("Unable to complete outbox job")
@@ -111,6 +147,29 @@ def create_outbox_ready_function(
                 FinalizationOutcome.NOT_FOUND,
             }:
                 raise RuntimeError("Webhook payment finalization is not conclusive")
+        refund_work = (
+            await webhook_store.load_refund_work(webhook_event_id)
+            if refund_service is not None
+            else None
+        )
+        if refund_work is not None and refund_service is not None:
+            refund_outcome = await refund_service.reconcile_webhook(
+                refund_work.attempt_id,
+                refund_work.refund_id,
+            )
+            if refund_outcome in {RefundOutcome.RETRY, RefundOutcome.PENDING}:
+                retry_index = job.attempt_count - 1
+                if retry_index >= len(_REFUND_RETRY_DELAYS):
+                    raise RuntimeError("Refund webhook reconciliation exhausted")
+                if not await outbox_store.reschedule(
+                    job_id=job.id,
+                    worker_id=context.run_id,
+                    delay_seconds=_REFUND_RETRY_DELAYS[retry_index],
+                ):
+                    raise RuntimeError("Unable to reschedule outbox job")
+                return {"status": "retry_scheduled"}
+            if refund_outcome is RefundOutcome.NOT_FOUND:
+                raise RuntimeError("Refund webhook attempt no longer exists")
         if not await webhook_store.mark_processed(webhook_event_id):
             raise ValueError("Referenced webhook event does not exist")
         if not await outbox_store.complete(job_id=job.id, worker_id=context.run_id):
@@ -139,3 +198,18 @@ def create_outbox_sweep_function(
         return {"status": "swept"}
 
     return sweep_outbox
+
+
+def create_lease_expiry_function(
+    client: inngest.Inngest,
+    refund_service: RefundServicePort,
+) -> inngest.Function[dict[str, int]]:
+    @client.create_function(
+        fn_id="lease-expiry",
+        trigger=inngest.TriggerCron(cron="* * * * *"),
+    )
+    async def expire_leases(context: inngest.Context) -> dict[str, int]:
+        del context
+        return {"released": await refund_service.release_expired_leases(limit=100)}
+
+    return expire_leases

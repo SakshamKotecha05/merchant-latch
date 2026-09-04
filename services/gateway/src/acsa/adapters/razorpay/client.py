@@ -4,7 +4,11 @@ from collections.abc import Mapping
 
 import httpx
 
-from acsa.domain.payments import ProviderOrderRecord, ProviderPaymentRecord
+from acsa.domain.payments import (
+    ProviderOrderRecord,
+    ProviderPaymentRecord,
+    ProviderRefundRecord,
+)
 from acsa.domain.receipts import ProviderOrderCandidate
 
 
@@ -84,6 +88,38 @@ class RazorpayClient:
         self._raise_for_provider_error(response, operation="fetch_payment")
         return _parse_payment(
             _json_body(response, operation="fetch_payment"), operation="fetch_payment"
+        )
+
+    async def create_full_refund(
+        self,
+        *,
+        payment_id: str,
+        amount_minor: int,
+        receipt: str,
+        notes: Mapping[str, str],
+    ) -> ProviderRefundRecord:
+        response = await self._http_client.post(
+            f"{self._base_url}/payments/{payment_id}/refund",
+            auth=self._auth,
+            json={
+                "amount": amount_minor,
+                "receipt": receipt,
+                "notes": dict(notes),
+            },
+        )
+        self._raise_for_provider_error(response, operation="create_refund")
+        return _parse_refund(
+            _json_body(response, operation="create_refund"), operation="create_refund"
+        )
+
+    async def fetch_refund(self, refund_id: str) -> ProviderRefundRecord:
+        response = await self._http_client.get(
+            f"{self._base_url}/refunds/{refund_id}",
+            auth=self._auth,
+        )
+        self._raise_for_provider_error(response, operation="fetch_refund")
+        return _parse_refund(
+            _json_body(response, operation="fetch_refund"), operation="fetch_refund"
         )
 
     @staticmethod
@@ -170,4 +206,36 @@ def _parse_order_record(payload: object, *, operation: str) -> ProviderOrderReco
         currency=candidate.currency,
         status=status,
         notes=candidate.notes,
+    )
+
+
+def _parse_refund(payload: object, *, operation: str) -> ProviderRefundRecord:
+    if not isinstance(payload, dict):
+        raise RazorpayProviderError(status_code=None, operation=operation)
+    refund_id = payload.get("id")
+    payment_id = payload.get("payment_id")
+    amount = payload.get("amount")
+    currency = payload.get("currency")
+    receipt = payload.get("receipt")
+    status = payload.get("status")
+    raw_notes = payload.get("notes", {})
+    if (
+        not isinstance(refund_id, str)
+        or not isinstance(payment_id, str)
+        or not isinstance(amount, int)
+        or isinstance(amount, bool)
+        or not isinstance(currency, str)
+        or not isinstance(receipt, str)
+        or not isinstance(status, str)
+        or not isinstance(raw_notes, dict)
+    ):
+        raise RazorpayProviderError(status_code=None, operation=operation)
+    return ProviderRefundRecord(
+        refund_id=refund_id,
+        payment_id=payment_id,
+        amount_minor=amount,
+        currency=currency,
+        receipt=receipt,
+        status=status,
+        notes={str(key): str(value) for key, value in raw_notes.items()},
     )
