@@ -256,7 +256,7 @@ def create_ucp_checkout_router(
             return buyer.response
         try:
             body = orjson.loads(raw_body)
-            expected_version = _expected_version(body)
+            expected_version = _optional_expected_version(body)
             requested_lines = _requested_lines(body)
             budget_minor = _budget_minor(body)
         except CheckoutTermsRejected as error:
@@ -285,6 +285,39 @@ def create_ucp_checkout_router(
                 checkout_id=checkout_id,
             )
             return response
+        if expected_version is None:
+            current = await _safe_commerce(
+                commerce_service.get_checkout(
+                    checkout_id,
+                    buyer_key_id=buyer.identity.principal_id,
+                )
+            )
+            if isinstance(current, JSONResponse):
+                await _record_exchange(
+                    protocol_store,
+                    request,
+                    raw_body,
+                    current,
+                    started_at,
+                    "unexpected_failure",
+                    buyer=buyer,
+                    checkout_id=checkout_id,
+                )
+                return current
+            if current is None:
+                response = _error(404, "checkout_not_found", "The checkout does not exist.")
+                await _record_exchange(
+                    protocol_store,
+                    request,
+                    raw_body,
+                    response,
+                    started_at,
+                    "domain_rejected",
+                    buyer=buyer,
+                    checkout_id=checkout_id,
+                )
+                return response
+            expected_version = current.version
         result = await _safe_commerce(
             commerce_service.update_checkout(
                 checkout_id=checkout_id,
@@ -560,9 +593,18 @@ def _budget_minor(body: object) -> int | None:
 
 
 def _expected_version(body: object) -> int:
+    value = _optional_expected_version(body)
+    if value is None:
+        raise ValueError
+    return value
+
+
+def _optional_expected_version(body: object) -> int | None:
     if not isinstance(body, dict):
         raise ValueError
     value = body.get("expected_version")
+    if value is None:
+        return None
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ValueError
     return int(value)
