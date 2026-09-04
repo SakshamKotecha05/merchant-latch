@@ -13,7 +13,9 @@ It verifies Razorpay webhooks, records accepted events durably in PostgreSQL, an
 - Outbox dispatch and an Inngest function mounted at `/api/inngest`.
 - FastAPI liveness endpoint at `/health/live`.
 - Public UCP discovery at `/.well-known/ucp`.
-- Signed UCP checkout creation and retrieval with durable nonce and idempotency replay protection.
+- Signed UCP checkout creation, update, standard cancellation, and retrieval with durable nonce and idempotency replay protection.
+- SSRF-safe buyer profile resolution with persistent trust-on-first-use key pinning.
+- Append-only redacted UCP exchange evidence and a token-protected JSON inspector.
 - Merchant-controlled escalation handoff without creating a payment or order.
 
 ## Requirements
@@ -45,10 +47,9 @@ RAZORPAY_KEY_SECRET
 RAZORPAY_WEBHOOK_SECRET
 INNGEST_EVENT_KEY
 INNGEST_SIGNING_KEY
-UCP_BUYER_PUBLIC_JWK
-UCP_BUYER_KEY_ID
 UCP_MERCHANT_PRIVATE_KEY
 UCP_MERCHANT_KEY_ID
+UCP_INSPECTOR_TOKEN
 PUBLIC_GATEWAY_URL
 PUBLIC_MERCHANT_URL
 ```
@@ -56,8 +57,9 @@ PUBLIC_MERCHANT_URL
 `DATABASE_URL` must authenticate as the restricted application role.
 `DATABASE_DIRECT_URL` must authenticate as a different owner role against the same database.
 Do not commit either connection URL or any provider secret.
-`UCP_BUYER_PUBLIC_JWK` must contain the trusted buyer's public P-256 JWK and its `kid` must equal `UCP_BUYER_KEY_ID`.
 `UCP_MERCHANT_PRIVATE_KEY` must contain the merchant's P-256 signing key and must never be committed.
+`UCP_INSPECTOR_TOKEN` must be a random secret of at least 32 characters.
+Buyer signing keys are fetched from the HTTPS profile URL in each signed `UCP-Agent` header and pinned after the first valid request.
 `PUBLIC_GATEWAY_URL` and `PUBLIC_MERCHANT_URL` must be absolute HTTPS URLs in deployed environments.
 
 ## Prepare PostgreSQL
@@ -111,3 +113,9 @@ curl http://localhost:8000/.well-known/ucp
 The response advertises the REST shopping service at `/ucp/shopping` and the `dev.ucp.shopping.checkout` capability.
 Local HTTP is for development only.
 The public profile endpoint must use HTTPS and must not redirect.
+
+## Inspect redacted UCP activity
+
+Operator-only JSON endpoints are available at `/internal/ucp/trust-pins` and `/internal/ucp/exchanges`.
+Send `Authorization: Bearer <UCP_INSPECTOR_TOKEN>` and never expose this token to a browser application.
+Inspector responses contain only bounded redacted metadata and digest values, never raw protocol messages or payment identifiers.

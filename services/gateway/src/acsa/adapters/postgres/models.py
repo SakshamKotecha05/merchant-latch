@@ -10,6 +10,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     LargeBinary,
     String,
@@ -537,3 +538,74 @@ class AuditEvent(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class UCPTrustPin(Base):
+    __tablename__ = "ucp_trust_pins"
+    __table_args__ = (
+        CheckConstraint("length(fingerprint) = 64", name="ck_ucp_trust_fingerprint_length"),
+    )
+
+    origin: Mapped[str] = mapped_column(String(255), primary_key=True)
+    profile_url: Mapped[str] = mapped_column(Text, nullable=False)
+    key_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    ucp_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class UCPExchangeEvent(Base):
+    __tablename__ = "ucp_exchange_events"
+    __table_args__ = (
+        CheckConstraint("length(request_sha256) = 64", name="ck_ucp_exchange_request_digest"),
+        CheckConstraint(
+            "response_sha256 IS NULL OR length(response_sha256) = 64",
+            name="ck_ucp_exchange_response_digest",
+        ),
+        CheckConstraint(
+            "profile_url_sha256 IS NULL OR length(profile_url_sha256) = 64",
+            name="ck_ucp_exchange_profile_digest",
+        ),
+        CheckConstraint(
+            "nonce_sha256 IS NULL OR length(nonce_sha256) = 64",
+            name="ck_ucp_exchange_nonce_digest",
+        ),
+        CheckConstraint(
+            "buyer_fingerprint IS NULL OR length(buyer_fingerprint) = 64",
+            name="ck_ucp_exchange_buyer_fingerprint",
+        ),
+        CheckConstraint("http_status BETWEEN 100 AND 599", name="ck_ucp_exchange_http_status"),
+        CheckConstraint(
+            "method IN ('GET', 'POST', 'PUT', 'DELETE', 'ROTATE')",
+            name="ck_ucp_exchange_method",
+        ),
+        CheckConstraint(
+            "outcome IN ('accepted', 'domain_rejected', 'profile_rejected', "
+            "'replay_or_version_rejected', 'replayed', 'request_rejected', 'signature_rejected', "
+            "'trust_rejected', 'trust_rotated', 'unexpected_failure')",
+            name="ck_ucp_exchange_outcome",
+        ),
+        CheckConstraint(
+            "completed_at >= started_at",
+            name="ck_ucp_exchange_timestamp_order",
+        ),
+        Index("ix_ucp_exchange_events_completed_id", "completed_at", "id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), primary_key=True, default=uuid4)
+    method: Mapped[str] = mapped_column(String(8), nullable=False)
+    route: Mapped[str] = mapped_column(String(255), nullable=False)
+    profile_origin: Mapped[str | None] = mapped_column(String(255), index=True)
+    profile_url_sha256: Mapped[str | None] = mapped_column(String(64))
+    buyer_key_id: Mapped[str | None] = mapped_column(String(255))
+    buyer_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    nonce_sha256: Mapped[str | None] = mapped_column(String(64))
+    request_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    response_sha256: Mapped[str | None] = mapped_column(String(64))
+    http_status: Mapped[int] = mapped_column(Integer, nullable=False)
+    outcome: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    checkout_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
