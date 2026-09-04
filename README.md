@@ -22,6 +22,8 @@ It verifies Razorpay webhooks, records accepted events durably in PostgreSQL, an
 
 - Python 3.12
 - [uv](https://docs.astral.sh/uv/)
+- Node.js 22 or newer
+- pnpm 11
 - PostgreSQL 17 or newer
 - Razorpay Test Mode credentials
 - Inngest event and signing keys
@@ -113,6 +115,83 @@ curl http://localhost:8000/.well-known/ucp
 The response advertises the REST shopping service at `/ucp/shopping` and the `dev.ucp.shopping.checkout` capability.
 Local HTTP is for development only.
 The public profile endpoint must use HTTPS and must not redirect.
+
+## Run the reference buyer
+
+Install the locked workspace dependencies from the repository root:
+
+```bash
+pnpm install --frozen-lockfile
+```
+
+Configure these server-only buyer variables:
+
+```text
+GEMINI_API_KEY
+GEMINI_MODEL
+UCP_BUYER_PRIVATE_KEY
+UCP_BUYER_KEY_ID
+BUYER_SESSION_SECRET
+PUBLIC_BUYER_URL
+PUBLIC_GATEWAY_URL
+```
+
+`GEMINI_MODEL` defaults to `gemini-3.8-flash`.
+`UCP_BUYER_PRIVATE_KEY` must be a P-256 private key in PEM format and must never be committed.
+`BUYER_SESSION_SECRET` must be a random secret of at least 32 characters.
+`PUBLIC_BUYER_URL` and `PUBLIC_GATEWAY_URL` must be public HTTPS origins for a complete signed checkout flow.
+The gateway must be able to fetch `PUBLIC_BUYER_URL/.well-known/ucp` without a redirect.
+
+Start the buyer from the repository root:
+
+```bash
+pnpm --filter merchantlatch-buyer dev
+```
+
+The buyer exposes these server routes:
+
+- `POST /api/buyer/plan` extracts typed shopping constraints and deterministically checks the merchant catalog.
+- `POST /api/buyer/plan/manual` creates the same safe plan from an exact variant selection without Gemini.
+- `POST /api/buyer/checkouts` requires `confirmed: true` and a current confirmation token before sending a signed UCP checkout.
+- `GET /.well-known/ucp` publishes only the buyer's public P-256 key.
+
+Create a natural-language plan:
+
+```bash
+curl -X POST http://localhost:3000/api/buyer/plan \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"one black running shoe in size 42 under INR 3000"}'
+```
+
+Use the deterministic manual fallback when language extraction is unavailable:
+
+```bash
+curl -X POST http://localhost:3000/api/buyer/plan/manual \
+  -H 'Content-Type: application/json' \
+  -d '{"variantId":"<merchant-variant-id>","quantity":1,"budgetMinor":300000,"currency":"INR"}'
+```
+
+After reviewing the returned merchant terms, submit its confirmation token explicitly:
+
+```bash
+curl -X POST http://localhost:3000/api/buyer/checkouts \
+  -H 'Content-Type: application/json' \
+  -d '{"confirmationToken":"<token-from-plan>","confirmed":true}'
+```
+
+The buyer re-fetches price, currency, and inventory immediately before checkout.
+It accepts merchant checkout data only after verifying the response signature and UCP schema.
+The current flow stops at `requires_escalation` and returns a verified same-origin merchant continuation URL.
+It does not create a Razorpay order or initiate payment.
+
+Run the workspace quality gates from the repository root:
+
+```bash
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm --filter merchantlatch-buyer build
+```
 
 ## Inspect redacted UCP activity
 
