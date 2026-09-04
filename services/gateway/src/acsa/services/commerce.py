@@ -81,6 +81,11 @@ class CommerceService:
         requested_lines: Sequence[RequestedLine],
         budget_minor: int | None,
     ) -> CommerceMutationResult:
+        continue_url = f"{self._public_merchant_url}/checkout/{checkout_id}"
+        if self._continue_token_issuer is not None:
+            version = expected_version + 1
+            token = self._continue_token_issuer(checkout_id, version, self._clock())
+            continue_url = f"{continue_url}?version={version}&session={token}"
         return await self._store.update_checkout(
             checkout_id=checkout_id,
             buyer_key_id=buyer_key_id,
@@ -92,6 +97,7 @@ class CommerceService:
             requested_lines=requested_lines,
             pickup_location_id=self._pickup_location_id,
             budget_minor=budget_minor,
+            continue_url=continue_url,
         )
 
     async def cancel_checkout(

@@ -120,9 +120,6 @@ class UCPRequestNonce(Base):
 
 class UCPIdempotencyRecord(Base):
     __tablename__ = "ucp_idempotency_records"
-    __table_args__ = (
-        UniqueConstraint("buyer_key_id", "idempotency_key", name="uq_ucp_idempotency_key"),
-    )
 
     buyer_key_id: Mapped[str] = mapped_column(String(255), primary_key=True)
     idempotency_key: Mapped[str] = mapped_column(String(255), primary_key=True)
@@ -609,3 +606,34 @@ class UCPExchangeEvent(Base):
     checkout_id: Mapped[str | None] = mapped_column(String(64), index=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class MerchantBrowserSession(Base):
+    __tablename__ = "merchant_browser_sessions"
+
+    token_digest: Mapped[str] = mapped_column(String(64), primary_key=True)
+    continuation_digest: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    checkout_id: Mapped[str] = mapped_column(
+        ForeignKey("checkout_sessions.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    checkout_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    csrf_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    review_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    approval_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+
+
+class OperatorSession(Base):
+    __tablename__ = "operator_sessions"
+    token_digest: Mapped[str] = mapped_column(String(64), primary_key=True)
+    csrf_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class OperatorLoginWindow(Base):
+    __tablename__ = "operator_login_window"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

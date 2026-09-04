@@ -8,6 +8,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from acsa.adapters.postgres.models import (
+    ApprovalSnapshotRecord,
     AuditEvent,
     CheckoutLine,
     CheckoutSession,
@@ -53,7 +54,25 @@ class PostgresPaymentFinalizationStore:
                 }
                 else FinalizationAction.FINALIZE
             )
-            return _work(attempt, provider_order, action)
+            launch_allowed = await session.scalar(
+                select(PaymentAttempt.id)
+                .join(CheckoutSession, CheckoutSession.id == PaymentAttempt.checkout_id)
+                .join(InventoryLease, InventoryLease.attempt_id == PaymentAttempt.id)
+                .join(
+                    ApprovalSnapshotRecord, ApprovalSnapshotRecord.id == PaymentAttempt.snapshot_id
+                )
+                .where(
+                    PaymentAttempt.id == attempt_id,
+                    PaymentAttempt.state == PaymentAttemptState.AWAITING_PAYMENT.value,
+                    PaymentAttempt.provider_uncertain.is_(False),
+                    CheckoutSession.status == CheckoutStatus.PAYMENT_PENDING.value,
+                    CheckoutSession.expires_at > func.now(),
+                    InventoryLease.state == InventoryLeaseState.ACTIVE.value,
+                    InventoryLease.expires_at > func.now(),
+                    ApprovalSnapshotRecord.expires_at > func.now(),
+                )
+            )
+            return _work(attempt, provider_order, action, launch_allowed is not None)
 
     async def mark_verifying(self, attempt_id: str) -> bool:
         async with self._session_factory() as session, session.begin():
@@ -208,15 +227,6 @@ class PostgresPaymentFinalizationStore:
             attempt.state = PaymentAttemptState.PAID.value
             checkout.status = CheckoutStatus.COMPLETED.value
             checkout.version += 1
-            for job_type in ("send_order_confirmation", "record_payment_evidence"):
-                session.add(
-                    OutboxJob(
-                        job_type=job_type,
-                        aggregate_type="payment_attempt",
-                        aggregate_id=attempt.id,
-                        payload={"attempt_id": attempt.id},
-                    )
-                )
             await _append_audit(
                 session,
                 attempt.id,
@@ -252,6 +262,7 @@ def _work(
     attempt: PaymentAttempt,
     provider_order: ProviderOrder,
     action: FinalizationAction,
+    launch_allowed: bool = False,
 ) -> FinalizationWork:
     return FinalizationWork(
         action=action,
@@ -262,6 +273,7 @@ def _work(
         amount_minor=attempt.amount_minor,
         currency=attempt.currency,
         snapshot_checksum=attempt.snapshot_checksum,
+        launch_allowed=launch_allowed,
     )
 
 

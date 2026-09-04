@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from acsa.adapters.inngest.dispatcher import InngestJobDispatcher
+from acsa.adapters.postgres.browser_sessions import PostgresBrowserSessionStore
 from acsa.adapters.postgres.commerce import PostgresCommerceStore
 from acsa.adapters.postgres.outbox import PostgresOutboxStore
 from acsa.adapters.postgres.payment_finalization import PostgresPaymentFinalizationStore
@@ -25,6 +26,7 @@ from acsa.inngest_functions import (
     create_outbox_ready_function,
     create_outbox_sweep_function,
 )
+from acsa.security.browser_sessions import BrowserAuthorization
 from acsa.security.continue_tokens import issue_continue_token
 from acsa.services.commerce import CommerceService
 from acsa.services.payment_finalization import PaymentFinalizationService
@@ -33,6 +35,8 @@ from acsa.services.refunds import RefundService
 from acsa.ucp_profiles import BuyerProfileResolver
 from acsa.web.catalog import create_catalog_router
 from acsa.web.merchant_checkout import create_merchant_checkout_router
+from acsa.web.merchant_sessions import create_merchant_session_router
+from acsa.web.operator import create_operator_router
 from acsa.web.payment_confirmation import create_payment_confirmation_router
 from acsa.web.ucp_checkout import create_ucp_checkout_router
 from acsa.web.ucp_inspector import create_ucp_inspector_router
@@ -133,13 +137,30 @@ def create_runtime_application() -> FastAPI:
             inspector_token=settings.ucp_inspector_token.get_secret_value(),
         )
     )
+    browser_store = PostgresBrowserSessionStore(session_factory)
+    app.include_router(
+        create_operator_router(
+            session_factory,
+            str(settings.public_merchant_url),
+            os.environ.get("MERCHANT_ADMIN_PASSWORD_HASH"),
+        )
+    )
+    browser_authorization = BrowserAuthorization(browser_store, str(settings.public_merchant_url))
+    app.include_router(
+        create_merchant_session_router(
+            browser_store, browser_authorization, merchant_private_key.public_key()
+        )
+    )
     app.include_router(
         create_merchant_checkout_router(
             commerce_service=commerce_service,
             merchant_public_key=merchant_private_key.public_key(),
+            authorization=browser_authorization,
         )
     )
-    app.include_router(create_payment_confirmation_router(payment_finalization_service))
+    app.include_router(
+        create_payment_confirmation_router(payment_finalization_service, browser_authorization)
+    )
     return app
 
 

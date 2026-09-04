@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 
 from pydantic import (
@@ -76,6 +77,10 @@ def load_gateway_settings(environment: Mapping[str, str]) -> GatewaySettings:
             f"Invalid configuration fields: {', '.join(invalid_fields)}"
         ) from None
 
+    if not re.fullmatch(r"rzp_test_[A-Za-z0-9_]+", settings.razorpay_key_id):
+        raise ConfigurationError(
+            "Invalid configuration fields: razorpay_key_id (Test Mode required)"
+        )
     inspector_token = settings.ucp_inspector_token.get_secret_value()
     if not inspector_token.strip() or inspector_token != inspector_token.strip():
         raise ConfigurationError("Invalid configuration fields: ucp_inspector_token")

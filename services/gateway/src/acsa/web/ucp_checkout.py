@@ -58,6 +58,13 @@ class AuthenticationFailure:
     identity: BuyerIdentity | None = None
 
 
+class CheckoutTermsRejected(ValueError):
+    def __init__(self, code: str, content: str) -> None:
+        self.code = code
+        self.content = content
+        super().__init__(code)
+
+
 def create_ucp_checkout_router(
     *,
     commerce_service: CommerceService,
@@ -165,6 +172,18 @@ def create_ucp_checkout_router(
             body = orjson.loads(raw_body)
             requested_lines = _requested_lines(body)
             budget_minor = _budget_minor(body)
+        except CheckoutTermsRejected as error:
+            response = _error(422, error.code, error.content)
+            await _record_exchange(
+                protocol_store,
+                request,
+                raw_body,
+                response,
+                started_at,
+                "request_rejected",
+                buyer=buyer,
+            )
+            return response
         except (orjson.JSONDecodeError, KeyError, TypeError, ValueError):
             response = _error(
                 400, "invalid_request", "The checkout request must include line_items."
@@ -240,6 +259,19 @@ def create_ucp_checkout_router(
             expected_version = _expected_version(body)
             requested_lines = _requested_lines(body)
             budget_minor = _budget_minor(body)
+        except CheckoutTermsRejected as error:
+            response = _error(422, error.code, error.content)
+            await _record_exchange(
+                protocol_store,
+                request,
+                raw_body,
+                response,
+                started_at,
+                "request_rejected",
+                buyer=buyer,
+                checkout_id=checkout_id,
+            )
+            return response
         except (orjson.JSONDecodeError, KeyError, TypeError, ValueError):
             response = _error(400, "invalid_request", "The checkout update is invalid.")
             await _record_exchange(
@@ -452,6 +484,7 @@ def create_ucp_checkout_router(
 def _requested_lines(body: object) -> list[RequestedLine]:
     if not isinstance(body, dict):
         raise ValueError
+    _validate_currency(body.get("currency"))
     line_items = body["line_items"]
     if not isinstance(line_items, list) or not line_items:
         raise ValueError
@@ -459,14 +492,60 @@ def _requested_lines(body: object) -> list[RequestedLine]:
     for line in line_items:
         if not isinstance(line, dict) or not isinstance(line.get("item"), dict):
             raise ValueError
-        variant_id = line["item"].get("id")
+        item = line["item"]
+        variant_id = item.get("id")
         quantity = line.get("quantity")
         if not isinstance(variant_id, str) or not variant_id:
             raise ValueError
         if isinstance(quantity, bool) or not isinstance(quantity, int):
             raise ValueError
+        _validate_client_terms(line, item)
         requested.append(RequestedLine(variant_id=variant_id, quantity=quantity))
     return requested
+
+
+def _validate_client_terms(line: dict[object, object], item: dict[object, object]) -> None:
+    _validate_currency(line.get("currency"))
+    _validate_currency(item.get("currency"))
+    for container in (line, item):
+        for key in ("unitPriceMinor", "unit_price_minor"):
+            value = container.get(key)
+            if value is None:
+                continue
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError
+            if value <= 0:
+                raise CheckoutTermsRejected(
+                    "price_not_positive",
+                    "Client-supplied price hints must be positive.",
+                )
+        unit_price = container.get("unit_price")
+        if unit_price is None:
+            continue
+        if not isinstance(unit_price, dict):
+            raise ValueError
+        _validate_currency(unit_price.get("currency"))
+        minor_units = unit_price.get("minor_units")
+        if minor_units is not None:
+            if isinstance(minor_units, bool) or not isinstance(minor_units, int):
+                raise ValueError
+            if minor_units <= 0:
+                raise CheckoutTermsRejected(
+                    "price_not_positive",
+                    "Client-supplied price hints must be positive.",
+                )
+
+
+def _validate_currency(value: object) -> None:
+    if value is None:
+        return
+    if not isinstance(value, str):
+        raise ValueError
+    if value != "INR":
+        raise CheckoutTermsRejected(
+            "currency_not_supported",
+            "Only INR checkout terms are supported.",
+        )
 
 
 def _budget_minor(body: object) -> int | None:

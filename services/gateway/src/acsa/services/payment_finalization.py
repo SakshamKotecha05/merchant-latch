@@ -73,6 +73,7 @@ class FinalizationWork:
     amount_minor: int
     currency: str
     snapshot_checksum: str
+    launch_allowed: bool = False
 
     @property
     def expected_notes(self) -> dict[str, str]:
@@ -135,7 +136,7 @@ class PaymentFinalizationService:
         self, payment_attempt_id: str
     ) -> PaymentLaunchConfiguration | None:
         work = await self._store.load_work(payment_attempt_id)
-        if work.action is not FinalizationAction.FINALIZE:
+        if work.action is not FinalizationAction.FINALIZE or not work.launch_allowed:
             return None
         return PaymentLaunchConfiguration(
             checkout_id=work.checkout_id,

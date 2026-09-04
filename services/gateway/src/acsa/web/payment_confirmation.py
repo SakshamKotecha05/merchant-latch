@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from acsa.security.browser_sessions import BrowserAuthorization, require_browser
 from acsa.services.payment_finalization import (
     EvidenceSource,
     FinalizationOutcome,
@@ -37,11 +38,13 @@ class PaymentConfirmationRequest(BaseModel):
 
 def create_payment_confirmation_router(
     service: PaymentConfirmationServicePort,
+    authorization: BrowserAuthorization | None = None,
 ) -> APIRouter:
     router = APIRouter()
 
     @router.get("/api/payments/razorpay/launch/{attempt_id}")
-    async def payment_launch(attempt_id: str) -> JSONResponse:
+    async def payment_launch(attempt_id: str, request: Request) -> JSONResponse:
+        await require_browser(authorization, request, attempt_id=attempt_id)
         configuration = await service.payment_launch_configuration(attempt_id)
         if configuration is None:
             return _response(404, "not_found")
@@ -58,7 +61,8 @@ def create_payment_confirmation_router(
         )
 
     @router.post("/api/payments/razorpay/confirm")
-    async def confirm_payment(body: PaymentConfirmationRequest) -> JSONResponse:
+    async def confirm_payment(body: PaymentConfirmationRequest, request: Request) -> JSONResponse:
+        await require_browser(authorization, request, attempt_id=body.attempt_id)
         outcome = await service.finalize_payment(
             body.attempt_id,
             EvidenceSource.browser(

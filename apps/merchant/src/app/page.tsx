@@ -1,0 +1,3 @@
+export default function Home() {
+  return <main id="main"><p className="eyebrow">THE MERCHANT BOUNDARY</p><h1>Your choice.<br />Verified here.</h1><p className="intro">Start in the reference buyer, choose a sneaker, and follow its verified merchant link to review your exact purchase here.</p><section className="card"><h2>A deliberate step before payment.</h2><p>We check price, stock, quantity, and your budget. You review and approve the merchant’s terms before Razorpay Checkout opens.</p><p>A checkout link is private and expires. This page cannot create a purchase on your behalf.</p></section></main>;
+}

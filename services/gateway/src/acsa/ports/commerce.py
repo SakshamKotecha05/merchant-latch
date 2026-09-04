@@ -58,6 +58,7 @@ class CommerceStorePort(Protocol):
         requested_lines: Sequence[RequestedLine],
         pickup_location_id: str,
         budget_minor: int | None,
+        continue_url: str | None = None,
     ) -> CommerceMutationResult: ...
 
     async def cancel_checkout(

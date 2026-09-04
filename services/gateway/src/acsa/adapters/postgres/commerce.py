@@ -6,6 +6,7 @@ from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 import orjson
@@ -21,6 +22,7 @@ from acsa.adapters.postgres.models import (
     Inventory,
     InventoryLease,
     MerchantConfig,
+    MerchantOrder,
     OutboxJob,
     PaymentAttempt,
     PickupLocation,
@@ -250,6 +252,7 @@ class PostgresCommerceStore:
         requested_lines: Sequence[RequestedLine],
         pickup_location_id: str,
         budget_minor: int | None,
+        continue_url: str | None = None,
     ) -> CommerceMutationResult:
         async with self._session_factory() as session, session.begin():
             replay = await _idempotency_result(
@@ -295,6 +298,8 @@ class PostgresCommerceStore:
                 return _blocked("checkout_projection_missing")
             await session.execute(delete(CheckoutLine).where(CheckoutLine.checkout_id == record.id))
             record.version += 1
+            if continue_url is not None:
+                projection.continue_url = continue_url
             record.policy_pack_version = merchant.active_policy_pack_version
             record.pickup_location_id = pickup_location_id
             record.budget_minor = budget_minor
@@ -580,6 +585,7 @@ class PostgresCommerceStore:
                     "attempt_id": attempt_id,
                     "snapshot_checksum": context.snapshot.checksum,
                 },
+                evidence_source="human_browser",
             )
             return ApprovalResult(
                 ApprovalOutcome.APPROVED,
@@ -932,7 +938,19 @@ async def _load_checkout(
         )
         for line in records
     ]
-    return _checkout_value(record, lines, continue_url=projection.continue_url)
+    order = await session.scalar(
+        select(MerchantOrder).where(MerchantOrder.checkout_id == record.id)
+    )
+    confirmation = None
+    if record.status == CheckoutStatus.COMPLETED.value and order is not None:
+        origin = urlsplit(projection.continue_url)
+        confirmation = {
+            "id": str(order.id),
+            "permalink_url": f"{origin.scheme}://{origin.netloc}/orders/{order.id}",
+        }
+    return _checkout_value(
+        record, lines, continue_url=projection.continue_url, order_confirmation=confirmation
+    )
 
 
 def _checkout_value(
@@ -941,6 +959,7 @@ def _checkout_value(
     *,
     continue_url: str,
     pricing: CheckoutPricing | None = None,
+    order_confirmation: dict[str, str] | None = None,
 ) -> AuthoritativeCheckout:
     if pricing is None:
         item_total = sum(line.line_total_minor for line in lines)
@@ -954,6 +973,8 @@ def _checkout_value(
     external_status = (
         "canceled" if record.status == CheckoutStatus.CANCELED.value else "requires_escalation"
     )
+    if record.status == CheckoutStatus.COMPLETED.value and order_confirmation is not None:
+        external_status = "completed"
     resource: dict[str, object] = {
         "ucp": {
             "version": UCP_VERSION,
@@ -1023,6 +1044,9 @@ def _checkout_value(
         "continue_url": continue_url,
         "expires_at": record.expires_at.isoformat().replace("+00:00", "Z"),
     }
+    if order_confirmation is not None:
+        resource["order"] = order_confirmation
+        resource.pop("continue_url", None)
     return AuthoritativeCheckout(
         id=record.id,
         buyer_key_id=record.buyer_key_id,
@@ -1051,6 +1075,7 @@ async def _append_audit(
     checkout_id: str,
     event_type: str,
     payload: dict[str, object],
+    evidence_source: str = "signed_ucp_request",
 ) -> None:
     sequence = await session.scalar(
         select(func.coalesce(func.max(AuditEvent.sequence), 0)).where(
@@ -1065,7 +1090,7 @@ async def _append_audit(
             sequence=int(sequence or 0) + 1,
             event_type=event_type,
             payload=payload,
-            evidence_source="signed_ucp_request",
+            evidence_source=evidence_source,
         )
     )
 
