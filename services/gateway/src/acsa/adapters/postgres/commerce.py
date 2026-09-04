@@ -958,19 +958,27 @@ def _checkout_value(
         "ucp": {
             "version": UCP_VERSION,
             "capabilities": {"dev.ucp.shopping.checkout": [{"version": UCP_VERSION}]},
+            "payment_handlers": {},
         },
         "id": record.id,
         "status": external_status,
+        "currency": pricing.currency,
         "checkout_version": record.version,
         "policy_pack_version": record.policy_pack_version,
         "line_items": [
             {
+                "id": line.variant_id,
                 "item": {
                     "id": line.variant_id,
                     "sku": line.sku,
                     "title": line.product_name,
+                    "price": line.unit_price_minor,
                 },
                 "quantity": line.quantity,
+                "totals": [
+                    {"type": "subtotal", "amount": line.line_total_minor},
+                    {"type": "total", "amount": line.line_total_minor},
+                ],
                 "unit_price": {
                     "currency": pricing.currency,
                     "minor_units": line.unit_price_minor,
@@ -984,6 +992,11 @@ def _checkout_value(
             }
             for line in lines
         ],
+        "totals": [
+            {"type": "subtotal", "amount": pricing.item_total_minor},
+            {"type": "total", "amount": pricing.total_minor},
+        ],
+        "links": [],
         "pricing": {
             "currency": pricing.currency,
             "item_total_minor": pricing.item_total_minor,

@@ -384,6 +384,37 @@ def _parse_signature_metadata(
     return tuple(components), verified_request
 
 
+def parse_signature_key_id(request: httpx.Request) -> str:
+    """Read the claimed key ID without treating the request as authenticated."""
+    header = request.headers.get("Signature-Input")
+    signature_header = request.headers.get("Signature")
+    if header is None or signature_header is None:
+        raise UCPVerificationError("signature_missing")
+    try:
+        signature_inputs = Dictionary()
+        signature_inputs.parse(header.encode("ascii"))
+        signatures = Dictionary()
+        signatures.parse(signature_header.encode("ascii"))
+    except (UnicodeEncodeError, ValueError) as error:
+        raise UCPVerificationError("signature_invalid") from error
+    if list(signature_inputs) != ["sig1"] or list(signatures) != ["sig1"]:
+        raise UCPVerificationError("signature_invalid")
+    signature_input = signature_inputs["sig1"]
+    signature = signatures["sig1"]
+    if (
+        not isinstance(signature_input, InnerList)
+        or not isinstance(signature, Item)
+        or not isinstance(signature.value, bytes)
+        or signature.params
+        or len(signature.value) != 64
+    ):
+        raise UCPVerificationError("signature_invalid")
+    key_id = signature_input.params.get("keyid")
+    if not isinstance(key_id, str) or not 1 <= len(key_id) <= 255:
+        raise UCPVerificationError("signature_invalid")
+    return key_id
+
+
 def _verify(
     message: httpx.Request | httpx.Response,
     *,

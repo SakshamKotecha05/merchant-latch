@@ -37,14 +37,18 @@ def bootstrap_runtime_role(
     with connect(settings.direct_url) as connection, connection.cursor() as cursor:
         cursor.execute(_advisory_lock_statement(settings))
         cursor.execute(
-            sql.SQL("SELECT 1 FROM pg_roles WHERE rolname = {}").format(
-                sql.Literal(settings.runtime_username)
-            )
+            sql.SQL(
+                "SELECT NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole "
+                "AND NOT rolinherit AND NOT rolreplication AND NOT rolbypassrls "
+                "AND rolcanlogin AND rolconnlimit = {} "
+                "FROM pg_roles WHERE rolname = {}"
+            ).format(sql.Literal(RUNTIME_CONNECTION_LIMIT), sql.Literal(settings.runtime_username))
         )
-        if cursor.fetchone() is None:
+        role_state = cursor.fetchone()
+        if role_state is None:
             cursor.execute(_create_role_statement(settings))
-        else:
-            cursor.execute(_alter_role_statement(settings))
+        elif role_state != (True,):
+            raise RuntimeRoleBootstrapError("Existing runtime role is not safely restricted")
         _revoke_parent_role_memberships(cursor, settings)
         for statement in _privilege_statements(settings):
             cursor.execute(statement)
@@ -174,17 +178,6 @@ def _revoke_parent_role_memberships(
 def _create_role_statement(settings: RuntimeRoleSettings) -> sql.Composed:
     return sql.SQL(
         "CREATE ROLE {} WITH LOGIN PASSWORD {} NOSUPERUSER NOCREATEDB NOCREATEROLE "
-        "NOINHERIT NOREPLICATION NOBYPASSRLS CONNECTION LIMIT {}"
-    ).format(
-        sql.Identifier(settings.runtime_username),
-        sql.Literal(settings.runtime_password),
-        sql.Literal(RUNTIME_CONNECTION_LIMIT),
-    )
-
-
-def _alter_role_statement(settings: RuntimeRoleSettings) -> sql.Composed:
-    return sql.SQL(
-        "ALTER ROLE {} WITH LOGIN PASSWORD {} NOSUPERUSER NOCREATEDB NOCREATEROLE "
         "NOINHERIT NOREPLICATION NOBYPASSRLS CONNECTION LIMIT {}"
     ).format(
         sql.Identifier(settings.runtime_username),

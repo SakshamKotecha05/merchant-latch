@@ -1,13 +1,18 @@
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
-from typing import Any
 
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, PostgresDsn, SecretStr, ValidationError
+from pydantic import (
+    AnyHttpUrl,
+    BaseModel,
+    ConfigDict,
+    Field,
+    PostgresDsn,
+    SecretStr,
+    ValidationError,
+)
 
 from acsa.database_urls import has_identity_query_override, has_percent_encoded_database_path
-from acsa.security.ucp_signatures import UCPVerificationError, import_public_jwk
 
 REQUIRED_GATEWAY_KEYS = (
     "DATABASE_URL",
@@ -16,8 +21,7 @@ REQUIRED_GATEWAY_KEYS = (
     "RAZORPAY_WEBHOOK_SECRET",
     "INNGEST_EVENT_KEY",
     "INNGEST_SIGNING_KEY",
-    "UCP_BUYER_PUBLIC_JWK",
-    "UCP_BUYER_KEY_ID",
+    "UCP_INSPECTOR_TOKEN",
     "UCP_MERCHANT_PRIVATE_KEY",
     "UCP_MERCHANT_KEY_ID",
     "PUBLIC_GATEWAY_URL",
@@ -38,8 +42,7 @@ class GatewaySettings(BaseModel):
     razorpay_webhook_secret: SecretStr
     inngest_event_key: SecretStr
     inngest_signing_key: SecretStr
-    ucp_buyer_public_jwk: dict[str, Any]
-    ucp_buyer_key_id: str
+    ucp_inspector_token: SecretStr = Field(min_length=32)
     ucp_merchant_private_key: SecretStr
     ucp_merchant_key_id: str
     public_gateway_url: AnyHttpUrl
@@ -60,8 +63,7 @@ def load_gateway_settings(environment: Mapping[str, str]) -> GatewaySettings:
                 "razorpay_webhook_secret": environment["RAZORPAY_WEBHOOK_SECRET"],
                 "inngest_event_key": environment["INNGEST_EVENT_KEY"],
                 "inngest_signing_key": environment["INNGEST_SIGNING_KEY"],
-                "ucp_buyer_public_jwk": _load_buyer_public_jwk(environment["UCP_BUYER_PUBLIC_JWK"]),
-                "ucp_buyer_key_id": environment["UCP_BUYER_KEY_ID"],
+                "ucp_inspector_token": environment["UCP_INSPECTOR_TOKEN"],
                 "ucp_merchant_private_key": environment["UCP_MERCHANT_PRIVATE_KEY"],
                 "ucp_merchant_key_id": environment["UCP_MERCHANT_KEY_ID"],
                 "public_gateway_url": environment["PUBLIC_GATEWAY_URL"],
@@ -74,8 +76,9 @@ def load_gateway_settings(environment: Mapping[str, str]) -> GatewaySettings:
             f"Invalid configuration fields: {', '.join(invalid_fields)}"
         ) from None
 
-    if settings.ucp_buyer_public_jwk.get("kid") != settings.ucp_buyer_key_id:
-        raise ConfigurationError("Invalid configuration fields: ucp_buyer_key_id")
+    inspector_token = settings.ucp_inspector_token.get_secret_value()
+    if not inspector_token.strip() or inspector_token != inspector_token.strip():
+        raise ConfigurationError("Invalid configuration fields: ucp_inspector_token")
     if settings.public_gateway_url.scheme != "https":
         raise ConfigurationError("Invalid configuration fields: public_gateway_url")
     if settings.public_merchant_url.scheme != "https":
@@ -96,14 +99,3 @@ def load_gateway_settings(environment: Mapping[str, str]) -> GatewaySettings:
         database_url = PostgresDsn(f"postgresql+psycopg{separator}{connection_details}")
 
     return settings.model_copy(update={"database_url": database_url})
-
-
-def _load_buyer_public_jwk(value: str) -> dict[str, Any]:
-    try:
-        parsed = json.loads(value)
-        if not isinstance(parsed, dict):
-            raise ValueError("UCP buyer JWK must be a JSON object")
-        import_public_jwk(parsed)
-    except (json.JSONDecodeError, UCPVerificationError, ValueError, TypeError):
-        raise ConfigurationError("Invalid configuration fields: UCP_BUYER_PUBLIC_JWK") from None
-    return parsed

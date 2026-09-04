@@ -15,6 +15,7 @@ from acsa.adapters.postgres.outbox import PostgresOutboxStore
 from acsa.adapters.postgres.payment_finalization import PostgresPaymentFinalizationStore
 from acsa.adapters.postgres.payment_orders import PostgresPaymentOrderStore
 from acsa.adapters.postgres.refunds import PostgresRefundStore
+from acsa.adapters.postgres.ucp_protocol import PostgresUCPProtocolStore
 from acsa.adapters.postgres.webhooks import PostgresWebhookStore
 from acsa.adapters.razorpay.client import RazorpayClient
 from acsa.application import create_application
@@ -25,15 +26,16 @@ from acsa.inngest_functions import (
     create_outbox_sweep_function,
 )
 from acsa.security.continue_tokens import issue_continue_token
-from acsa.security.ucp_signatures import import_public_jwk
 from acsa.services.commerce import CommerceService
 from acsa.services.payment_finalization import PaymentFinalizationService
 from acsa.services.payment_orders import PaymentOrderService
 from acsa.services.refunds import RefundService
+from acsa.ucp_profiles import BuyerProfileResolver
 from acsa.web.catalog import create_catalog_router
 from acsa.web.merchant_checkout import create_merchant_checkout_router
 from acsa.web.payment_confirmation import create_payment_confirmation_router
 from acsa.web.ucp_checkout import create_ucp_checkout_router
+from acsa.web.ucp_inspector import create_ucp_inspector_router
 
 
 def create_runtime_application() -> FastAPI:
@@ -41,6 +43,7 @@ def create_runtime_application() -> FastAPI:
     engine = create_async_engine(settings.database_url.unicode_string())
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     commerce_store = PostgresCommerceStore(session_factory)
+    ucp_protocol_store = PostgresUCPProtocolStore(session_factory)
     outbox_store = PostgresOutboxStore(session_factory)
     webhook_store = PostgresWebhookStore(session_factory)
     provider_http_client = httpx.AsyncClient(timeout=10)
@@ -117,11 +120,17 @@ def create_runtime_application() -> FastAPI:
     app.include_router(
         create_ucp_checkout_router(
             commerce_service=commerce_service,
-            buyer_public_key=import_public_jwk(settings.ucp_buyer_public_jwk),
-            buyer_key_id=settings.ucp_buyer_key_id,
+            buyer_profile_resolver=BuyerProfileResolver(),
+            protocol_store=ucp_protocol_store,
             merchant_private_key=merchant_private_key,
             merchant_key_id=settings.ucp_merchant_key_id,
             public_gateway_url=str(settings.public_gateway_url),
+        )
+    )
+    app.include_router(
+        create_ucp_inspector_router(
+            store=ucp_protocol_store,
+            inspector_token=settings.ucp_inspector_token.get_secret_value(),
         )
     )
     app.include_router(

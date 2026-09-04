@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Awaitable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Protocol
 
 import httpx
 import orjson
@@ -12,22 +14,55 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
+from acsa.adapters.postgres.ucp_protocol import (
+    NewUCPExchange,
+    TrustPin,
+    UCPTrustError,
+)
 from acsa.domain.commerce import CommerceMutationOutcome, CommerceMutationResult, RequestedLine
 from acsa.domain.ucp_checkout import SHOPPING_SERVICE_PATH, UCP_VERSION
 from acsa.security.ucp_signatures import (
     UCPVerificationError,
     export_public_jwk,
+    parse_signature_key_id,
     sign_response,
     verify_request,
 )
 from acsa.services.commerce import CommerceService
+from acsa.ucp_profiles import BuyerIdentity, BuyerProfileError
+
+
+class BuyerResolver(Protocol):
+    async def resolve(self, ucp_agent: str, key_id: str) -> BuyerIdentity: ...
+
+
+class UCPProtocolStore(Protocol):
+    async def get_pin(self, origin: str) -> TrustPin | None: ...
+
+    async def verify_or_pin(self, identity: BuyerIdentity, now: datetime) -> TrustPin: ...
+
+    async def append_exchange(self, event: NewUCPExchange) -> object: ...
+
+
+@dataclass(frozen=True, slots=True)
+class AuthenticatedBuyer:
+    identity: BuyerIdentity
+    nonce: str
+    nonce_expires_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class AuthenticationFailure:
+    response: JSONResponse
+    outcome: str
+    identity: BuyerIdentity | None = None
 
 
 def create_ucp_checkout_router(
     *,
     commerce_service: CommerceService,
-    buyer_public_key: ec.EllipticCurvePublicKey,
-    buyer_key_id: str,
+    buyer_profile_resolver: BuyerResolver,
+    protocol_store: UCPProtocolStore,
     merchant_private_key: ec.EllipticCurvePrivateKey,
     merchant_key_id: str,
     public_gateway_url: str,
@@ -63,7 +98,7 @@ def create_ucp_checkout_router(
                     },
                     "payment_handlers": {},
                 },
-                "keys": [
+                "signing_keys": [
                     export_public_jwk(merchant_private_key.public_key(), key_id=merchant_key_id)
                 ],
             },
@@ -109,88 +144,307 @@ def create_ucp_checkout_router(
 
     @router.post(f"{SHOPPING_SERVICE_PATH}/checkout-sessions")
     async def create_checkout(request: Request) -> Response:
+        started_at = datetime.now(UTC)
         raw_body = await request.body()
-        verified = _verify(request, raw_body, base_url, buyer_public_key, buyer_key_id)
-        if isinstance(verified, JSONResponse):
-            return verified
+        response: Response
+        buyer = await _authenticate(
+            request, raw_body, base_url, buyer_profile_resolver, protocol_store
+        )
+        if isinstance(buyer, AuthenticationFailure):
+            await _record_exchange(
+                protocol_store,
+                request,
+                raw_body,
+                buyer.response,
+                started_at,
+                buyer.outcome,
+                identity=buyer.identity,
+            )
+            return buyer.response
         try:
             body = orjson.loads(raw_body)
             requested_lines = _requested_lines(body)
             budget_minor = _budget_minor(body)
         except (orjson.JSONDecodeError, KeyError, TypeError, ValueError):
-            return _error(400, "invalid_request", "The checkout request must include line_items.")
-        result = await commerce_service.create_checkout(
-            buyer_key_id=buyer_key_id,
-            nonce=verified.nonce,
-            nonce_expires_at=verified.expires_at,
-            idempotency_key=request.headers["Idempotency-Key"],
-            request_sha256=hashlib.sha256(raw_body).hexdigest(),
-            requested_lines=requested_lines,
-            budget_minor=budget_minor,
+            response = _error(
+                400, "invalid_request", "The checkout request must include line_items."
+            )
+            await _record_exchange(
+                protocol_store,
+                request,
+                raw_body,
+                response,
+                started_at,
+                "request_rejected",
+                buyer=buyer,
+            )
+            return response
+        result = await _safe_commerce(
+            commerce_service.create_checkout(
+                buyer_key_id=buyer.identity.principal_id,
+                nonce=buyer.nonce,
+                nonce_expires_at=buyer.nonce_expires_at,
+                idempotency_key=request.headers["Idempotency-Key"],
+                request_sha256=hashlib.sha256(raw_body).hexdigest(),
+                requested_lines=requested_lines,
+                budget_minor=budget_minor,
+            )
         )
-        return _mutation_response(
+        if isinstance(result, JSONResponse):
+            await _record_exchange(
+                protocol_store,
+                request,
+                raw_body,
+                result,
+                started_at,
+                "unexpected_failure",
+                buyer=buyer,
+            )
+            return result
+        response = _mutation_response(
             result, request, merchant_private_key, merchant_key_id, created_status=201
         )
+        await _record_exchange(
+            protocol_store,
+            request,
+            raw_body,
+            response,
+            started_at,
+            _mutation_outcome(result, response),
+            buyer=buyer,
+            checkout_id=result.checkout.id if result.checkout is not None else None,
+        )
+        return response
 
     @router.put(f"{SHOPPING_SERVICE_PATH}/checkout-sessions/{{checkout_id}}")
     async def update_checkout(checkout_id: str, request: Request) -> Response:
+        started_at = datetime.now(UTC)
         raw_body = await request.body()
-        verified = _verify(request, raw_body, base_url, buyer_public_key, buyer_key_id)
-        if isinstance(verified, JSONResponse):
-            return verified
+        response: Response
+        buyer = await _authenticate(
+            request, raw_body, base_url, buyer_profile_resolver, protocol_store
+        )
+        if isinstance(buyer, AuthenticationFailure):
+            await _record_exchange(
+                protocol_store,
+                request,
+                raw_body,
+                buyer.response,
+                started_at,
+                buyer.outcome,
+                identity=buyer.identity,
+            )
+            return buyer.response
         try:
             body = orjson.loads(raw_body)
             expected_version = _expected_version(body)
             requested_lines = _requested_lines(body)
             budget_minor = _budget_minor(body)
         except (orjson.JSONDecodeError, KeyError, TypeError, ValueError):
-            return _error(400, "invalid_request", "The checkout update is invalid.")
-        result = await commerce_service.update_checkout(
-            checkout_id=checkout_id,
-            buyer_key_id=buyer_key_id,
-            nonce=verified.nonce,
-            nonce_expires_at=verified.expires_at,
-            expected_version=expected_version,
-            idempotency_key=request.headers["Idempotency-Key"],
-            request_sha256=hashlib.sha256(raw_body).hexdigest(),
-            requested_lines=requested_lines,
-            budget_minor=budget_minor,
+            response = _error(400, "invalid_request", "The checkout update is invalid.")
+            await _record_exchange(
+                protocol_store,
+                request,
+                raw_body,
+                response,
+                started_at,
+                "request_rejected",
+                buyer=buyer,
+                checkout_id=checkout_id,
+            )
+            return response
+        result = await _safe_commerce(
+            commerce_service.update_checkout(
+                checkout_id=checkout_id,
+                buyer_key_id=buyer.identity.principal_id,
+                nonce=buyer.nonce,
+                nonce_expires_at=buyer.nonce_expires_at,
+                expected_version=expected_version,
+                idempotency_key=request.headers["Idempotency-Key"],
+                request_sha256=hashlib.sha256(raw_body).hexdigest(),
+                requested_lines=requested_lines,
+                budget_minor=budget_minor,
+            )
         )
-        return _mutation_response(result, request, merchant_private_key, merchant_key_id)
+        if isinstance(result, JSONResponse):
+            await _record_exchange(
+                protocol_store,
+                request,
+                raw_body,
+                result,
+                started_at,
+                "unexpected_failure",
+                buyer=buyer,
+                checkout_id=checkout_id,
+            )
+            return result
+        response = _mutation_response(result, request, merchant_private_key, merchant_key_id)
+        await _record_exchange(
+            protocol_store,
+            request,
+            raw_body,
+            response,
+            started_at,
+            _mutation_outcome(result, response),
+            buyer=buyer,
+            checkout_id=checkout_id,
+        )
+        return response
 
+    @router.post(f"{SHOPPING_SERVICE_PATH}/checkout-sessions/{{checkout_id}}/cancel")
     @router.delete(f"{SHOPPING_SERVICE_PATH}/checkout-sessions/{{checkout_id}}")
     async def cancel_checkout(checkout_id: str, request: Request) -> Response:
+        started_at = datetime.now(UTC)
         raw_body = await request.body()
-        verified = _verify(request, raw_body, base_url, buyer_public_key, buyer_key_id)
-        if isinstance(verified, JSONResponse):
-            return verified
-        try:
-            body = orjson.loads(raw_body)
-            expected_version = _expected_version(body)
-        except (orjson.JSONDecodeError, KeyError, TypeError, ValueError):
-            return _error(400, "invalid_request", "The checkout cancellation is invalid.")
-        result = await commerce_service.cancel_checkout(
-            checkout_id=checkout_id,
-            buyer_key_id=buyer_key_id,
-            nonce=verified.nonce,
-            nonce_expires_at=verified.expires_at,
-            expected_version=expected_version,
-            idempotency_key=request.headers["Idempotency-Key"],
-            request_sha256=hashlib.sha256(raw_body).hexdigest(),
+        response: Response
+        buyer = await _authenticate(
+            request, raw_body, base_url, buyer_profile_resolver, protocol_store
         )
-        return _mutation_response(result, request, merchant_private_key, merchant_key_id)
+        if isinstance(buyer, AuthenticationFailure):
+            await _record_exchange(
+                protocol_store,
+                request,
+                raw_body,
+                buyer.response,
+                started_at,
+                buyer.outcome,
+                identity=buyer.identity,
+            )
+            return buyer.response
+        if request.method == "POST" and not raw_body:
+            current = await _safe_commerce(
+                commerce_service.get_checkout(
+                    checkout_id,
+                    buyer_key_id=buyer.identity.principal_id,
+                )
+            )
+            if isinstance(current, JSONResponse):
+                await _record_exchange(
+                    protocol_store,
+                    request,
+                    raw_body,
+                    current,
+                    started_at,
+                    "unexpected_failure",
+                    buyer=buyer,
+                    checkout_id=checkout_id,
+                )
+                return current
+            if current is None:
+                response = _error(404, "checkout_not_found", "The checkout does not exist.")
+                await _record_exchange(
+                    protocol_store,
+                    request,
+                    raw_body,
+                    response,
+                    started_at,
+                    "domain_rejected",
+                    buyer=buyer,
+                    checkout_id=checkout_id,
+                )
+                return response
+            expected_version = current.version
+        else:
+            try:
+                body = orjson.loads(raw_body)
+                expected_version = _expected_version(body)
+            except (orjson.JSONDecodeError, KeyError, TypeError, ValueError):
+                response = _error(
+                    400,
+                    "invalid_request",
+                    "The checkout cancellation is invalid.",
+                )
+                await _record_exchange(
+                    protocol_store,
+                    request,
+                    raw_body,
+                    response,
+                    started_at,
+                    "request_rejected",
+                    buyer=buyer,
+                    checkout_id=checkout_id,
+                )
+                return response
+        result = await _safe_commerce(
+            commerce_service.cancel_checkout(
+                checkout_id=checkout_id,
+                buyer_key_id=buyer.identity.principal_id,
+                nonce=buyer.nonce,
+                nonce_expires_at=buyer.nonce_expires_at,
+                expected_version=expected_version,
+                idempotency_key=request.headers["Idempotency-Key"],
+                request_sha256=hashlib.sha256(raw_body).hexdigest(),
+            )
+        )
+        if isinstance(result, JSONResponse):
+            await _record_exchange(
+                protocol_store,
+                request,
+                raw_body,
+                result,
+                started_at,
+                "unexpected_failure",
+                buyer=buyer,
+                checkout_id=checkout_id,
+            )
+            return result
+        response = _mutation_response(result, request, merchant_private_key, merchant_key_id)
+        await _record_exchange(
+            protocol_store,
+            request,
+            raw_body,
+            response,
+            started_at,
+            _mutation_outcome(result, response),
+            buyer=buyer,
+            checkout_id=checkout_id,
+        )
+        return response
 
     @router.get(f"{SHOPPING_SERVICE_PATH}/checkout-sessions/{{checkout_id}}")
     async def get_checkout(checkout_id: str, request: Request) -> Response:
-        verified = _verify(request, b"", base_url, buyer_public_key, buyer_key_id)
-        if isinstance(verified, JSONResponse):
-            return verified
-        checkout = await commerce_service.get_checkout(checkout_id, buyer_key_id=buyer_key_id)
-        if checkout is None:
-            return _error(404, "checkout_not_found", "The checkout does not exist.")
-        return _signed_response(
-            checkout.canonical_bytes, 200, request, merchant_private_key, merchant_key_id
+        started_at = datetime.now(UTC)
+        response: Response
+        buyer = await _authenticate(request, b"", base_url, buyer_profile_resolver, protocol_store)
+        if isinstance(buyer, AuthenticationFailure):
+            await _record_exchange(
+                protocol_store,
+                request,
+                b"",
+                buyer.response,
+                started_at,
+                buyer.outcome,
+                identity=buyer.identity,
+            )
+            return buyer.response
+        checkout = await _safe_commerce(
+            commerce_service.get_checkout(
+                checkout_id,
+                buyer_key_id=buyer.identity.principal_id,
+            )
         )
+        if isinstance(checkout, JSONResponse):
+            response = checkout
+            outcome = "unexpected_failure"
+        elif checkout is None:
+            response = _error(404, "checkout_not_found", "The checkout does not exist.")
+            outcome = _outcome(response)
+        else:
+            response = _signed_response(
+                checkout.canonical_bytes, 200, request, merchant_private_key, merchant_key_id
+            )
+            outcome = _outcome(response)
+        await _record_exchange(
+            protocol_store,
+            request,
+            b"",
+            response,
+            started_at,
+            outcome,
+            buyer=buyer,
+            checkout_id=checkout_id,
+        )
+        return response
 
     return router
 
@@ -258,21 +512,149 @@ def _mutation_response(
     return _signed_response(result.response_body, status_code, request, private_key, key_id)
 
 
-def _verify(
+async def _authenticate(
     request: Request,
     raw_body: bytes,
     base_url: str,
-    public_key: ec.EllipticCurvePublicKey,
-    key_id: str,
-) -> Any:
+    resolver: BuyerResolver,
+    store: UCPProtocolStore,
+) -> AuthenticatedBuyer | AuthenticationFailure:
     headers = {key: value for key, value in request.headers.items() if key.lower() != "host"}
     signed_request = httpx.Request(
         request.method, f"{base_url}{request.url.path}", headers=headers, content=raw_body
     )
     try:
-        return verify_request(signed_request, public_key=public_key, expected_key_id=key_id)
+        key_id = parse_signature_key_id(signed_request)
     except UCPVerificationError:
-        return _error(401, "authentication_failed", "The UCP request signature is invalid.")
+        return _authentication_failure("signature_rejected")
+    try:
+        identity = await resolver.resolve(request.headers.get("UCP-Agent", ""), key_id)
+    except BuyerProfileError:
+        return _authentication_failure("profile_rejected")
+    except Exception:
+        return _unexpected_failure()
+    try:
+        existing = await store.get_pin(identity.origin)
+        if existing is not None and not _pin_matches(existing, identity):
+            raise UCPTrustError("trust_mismatch")
+    except UCPTrustError:
+        return _authentication_failure("trust_rejected", identity)
+    except Exception:
+        return _unexpected_failure(identity)
+    try:
+        verified = verify_request(
+            signed_request,
+            public_key=identity.public_key,
+            expected_key_id=identity.key_id,
+        )
+    except UCPVerificationError:
+        return _authentication_failure("signature_rejected", identity)
+    except Exception:
+        return _unexpected_failure(identity)
+    try:
+        await store.verify_or_pin(identity, datetime.now(UTC))
+    except UCPTrustError:
+        return _authentication_failure("trust_rejected", identity)
+    except Exception:
+        return _unexpected_failure(identity)
+    return AuthenticatedBuyer(identity, verified.nonce, verified.expires_at)
+
+
+def _authentication_failure(
+    outcome: str, identity: BuyerIdentity | None = None
+) -> AuthenticationFailure:
+    return AuthenticationFailure(
+        _error(401, "authentication_failed", "The UCP request signature is invalid."),
+        outcome,
+        identity,
+    )
+
+
+def _unexpected_failure(identity: BuyerIdentity | None = None) -> AuthenticationFailure:
+    return AuthenticationFailure(
+        _error(500, "protocol_unavailable", "The checkout service is unavailable."),
+        "unexpected_failure",
+        identity,
+    )
+
+
+async def _safe_commerce[T](operation: Awaitable[T]) -> T | JSONResponse:
+    try:
+        return await operation
+    except Exception:
+        return _error(500, "protocol_unavailable", "The checkout service is unavailable.")
+
+
+def _pin_matches(pin: TrustPin, identity: BuyerIdentity) -> bool:
+    return (
+        pin.profile_url == identity.profile_url
+        and pin.key_id == identity.key_id
+        and pin.fingerprint == identity.fingerprint
+        and pin.version == identity.version
+    )
+
+
+def _outcome(response: Response) -> str:
+    if 200 <= response.status_code < 300:
+        return "accepted"
+    if response.status_code == 409:
+        return "replay_or_version_rejected"
+    return "domain_rejected"
+
+
+def _mutation_outcome(result: CommerceMutationResult, response: Response) -> str:
+    if result.outcome is CommerceMutationOutcome.REPLAYED:
+        return "replayed"
+    return _outcome(response)
+
+
+async def _record_exchange(
+    store: UCPProtocolStore,
+    request: Request,
+    raw_body: bytes,
+    response: Response,
+    started_at: datetime,
+    outcome: str,
+    *,
+    buyer: AuthenticatedBuyer | None = None,
+    identity: BuyerIdentity | None = None,
+    checkout_id: str | None = None,
+) -> None:
+    resolved_identity = buyer.identity if buyer is not None else identity
+    body = bytes(response.body)
+    route = request.scope.get("route")
+    route_path = getattr(route, "path", request.url.path)
+    if not isinstance(route_path, str):
+        route_path = request.url.path
+    try:
+        await store.append_exchange(
+            NewUCPExchange(
+                method=request.method,
+                route=route_path,
+                profile_origin=resolved_identity.origin if resolved_identity is not None else None,
+                profile_url_sha256=(
+                    hashlib.sha256(resolved_identity.profile_url.encode()).hexdigest()
+                    if resolved_identity is not None
+                    else None
+                ),
+                buyer_key_id=resolved_identity.key_id if resolved_identity is not None else None,
+                buyer_fingerprint=(
+                    resolved_identity.fingerprint if resolved_identity is not None else None
+                ),
+                nonce_sha256=(
+                    hashlib.sha256(buyer.nonce.encode()).hexdigest() if buyer is not None else None
+                ),
+                request_sha256=hashlib.sha256(raw_body).hexdigest(),
+                response_sha256=hashlib.sha256(body).hexdigest() if body else None,
+                http_status=response.status_code,
+                outcome=outcome,
+                checkout_id=checkout_id,
+                started_at=started_at,
+                completed_at=datetime.now(UTC),
+            )
+        )
+    except Exception:
+        return
 
 
 def _signed_response(
@@ -308,4 +690,18 @@ def _signed_response(
 
 
 def _error(status_code: int, code: str, content: str) -> JSONResponse:
-    return JSONResponse(status_code=status_code, content={"code": code, "content": content})
+    severity = "recoverable" if status_code in {400, 409, 422} else "unrecoverable"
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "ucp": {"version": UCP_VERSION, "status": "error"},
+            "messages": [
+                {
+                    "type": "error",
+                    "code": code,
+                    "content": content,
+                    "severity": severity,
+                }
+            ],
+        },
+    )
