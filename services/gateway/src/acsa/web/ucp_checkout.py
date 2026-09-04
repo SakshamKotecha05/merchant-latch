@@ -168,6 +168,47 @@ def create_ucp_checkout_router(
                 identity=buyer.identity,
             )
             return buyer.response
+        request_sha256 = hashlib.sha256(raw_body).hexdigest()
+        existing = await _safe_commerce(
+            commerce_service.lookup_idempotency(
+                buyer_key_id=buyer.identity.principal_id,
+                operation="create_checkout",
+                idempotency_key=request.headers["Idempotency-Key"],
+                request_sha256=request_sha256,
+            )
+        )
+        if isinstance(existing, JSONResponse):
+            await _record_exchange(
+                protocol_store,
+                request,
+                raw_body,
+                existing,
+                started_at,
+                "unexpected_failure",
+                buyer=buyer,
+            )
+            return existing
+        if existing is not None:
+            response = _mutation_response(
+                existing,
+                request,
+                merchant_private_key,
+                merchant_key_id,
+                created_status=201,
+            )
+            await _record_exchange(
+                protocol_store,
+                request,
+                raw_body,
+                response,
+                started_at,
+                _mutation_outcome(existing, response),
+                buyer=buyer,
+                checkout_id=(
+                    existing.checkout.id if existing.checkout is not None else None
+                ),
+            )
+            return response
         try:
             body = orjson.loads(raw_body)
             requested_lines = _requested_lines(body)
@@ -204,7 +245,7 @@ def create_ucp_checkout_router(
                 nonce=buyer.nonce,
                 nonce_expires_at=buyer.nonce_expires_at,
                 idempotency_key=request.headers["Idempotency-Key"],
-                request_sha256=hashlib.sha256(raw_body).hexdigest(),
+                request_sha256=request_sha256,
                 requested_lines=requested_lines,
                 budget_minor=budget_minor,
             )
@@ -254,6 +295,42 @@ def create_ucp_checkout_router(
                 identity=buyer.identity,
             )
             return buyer.response
+        request_sha256 = hashlib.sha256(raw_body).hexdigest()
+        existing = await _safe_commerce(
+            commerce_service.lookup_idempotency(
+                buyer_key_id=buyer.identity.principal_id,
+                operation=f"update_checkout:{checkout_id}",
+                idempotency_key=request.headers["Idempotency-Key"],
+                request_sha256=request_sha256,
+            )
+        )
+        if isinstance(existing, JSONResponse):
+            await _record_exchange(
+                protocol_store,
+                request,
+                raw_body,
+                existing,
+                started_at,
+                "unexpected_failure",
+                buyer=buyer,
+                checkout_id=checkout_id,
+            )
+            return existing
+        if existing is not None:
+            response = _mutation_response(
+                existing, request, merchant_private_key, merchant_key_id
+            )
+            await _record_exchange(
+                protocol_store,
+                request,
+                raw_body,
+                response,
+                started_at,
+                _mutation_outcome(existing, response),
+                buyer=buyer,
+                checkout_id=checkout_id,
+            )
+            return response
         try:
             body = orjson.loads(raw_body)
             expected_version = _optional_expected_version(body)
@@ -326,7 +403,7 @@ def create_ucp_checkout_router(
                 nonce_expires_at=buyer.nonce_expires_at,
                 expected_version=expected_version,
                 idempotency_key=request.headers["Idempotency-Key"],
-                request_sha256=hashlib.sha256(raw_body).hexdigest(),
+                request_sha256=request_sha256,
                 requested_lines=requested_lines,
                 budget_minor=budget_minor,
             )
@@ -376,6 +453,42 @@ def create_ucp_checkout_router(
                 identity=buyer.identity,
             )
             return buyer.response
+        request_sha256 = hashlib.sha256(raw_body).hexdigest()
+        existing = await _safe_commerce(
+            commerce_service.lookup_idempotency(
+                buyer_key_id=buyer.identity.principal_id,
+                operation=f"cancel_checkout:{checkout_id}",
+                idempotency_key=request.headers["Idempotency-Key"],
+                request_sha256=request_sha256,
+            )
+        )
+        if isinstance(existing, JSONResponse):
+            await _record_exchange(
+                protocol_store,
+                request,
+                raw_body,
+                existing,
+                started_at,
+                "unexpected_failure",
+                buyer=buyer,
+                checkout_id=checkout_id,
+            )
+            return existing
+        if existing is not None:
+            response = _mutation_response(
+                existing, request, merchant_private_key, merchant_key_id
+            )
+            await _record_exchange(
+                protocol_store,
+                request,
+                raw_body,
+                response,
+                started_at,
+                _mutation_outcome(existing, response),
+                buyer=buyer,
+                checkout_id=checkout_id,
+            )
+            return response
         if request.method == "POST" and not raw_body:
             current = await _safe_commerce(
                 commerce_service.get_checkout(
@@ -438,7 +551,7 @@ def create_ucp_checkout_router(
                 nonce_expires_at=buyer.nonce_expires_at,
                 expected_version=expected_version,
                 idempotency_key=request.headers["Idempotency-Key"],
-                request_sha256=hashlib.sha256(raw_body).hexdigest(),
+                request_sha256=request_sha256,
             )
         )
         if isinstance(result, JSONResponse):
@@ -629,7 +742,12 @@ def _mutation_response(
         return _error(422, rule_id, "The merchant policy blocked this checkout request.")
     if result.response_body is None:
         return _error(500, "checkout_unavailable", "The checkout is unavailable.")
-    status_code = created_status if result.outcome is CommerceMutationOutcome.CREATED else 200
+    status_code = (
+        created_status
+        if result.outcome
+        in {CommerceMutationOutcome.CREATED, CommerceMutationOutcome.REPLAYED}
+        else 200
+    )
     return _signed_response(result.response_body, status_code, request, private_key, key_id)
 
 

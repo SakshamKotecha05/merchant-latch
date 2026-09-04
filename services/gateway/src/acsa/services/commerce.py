@@ -36,6 +36,21 @@ class CommerceService:
         self._checkout_id_factory = checkout_id_factory or (lambda: f"chk_{uuid4().hex}")
         self._continue_token_issuer = continue_token_issuer
 
+    async def lookup_idempotency(
+        self,
+        *,
+        buyer_key_id: str,
+        operation: str,
+        idempotency_key: str,
+        request_sha256: str,
+    ) -> CommerceMutationResult | None:
+        return await self._store.lookup_idempotency(
+            buyer_key_id=buyer_key_id,
+            operation=operation,
+            idempotency_key=idempotency_key,
+            request_sha256=request_sha256,
+        )
+
     async def create_checkout(
         self,
         *,

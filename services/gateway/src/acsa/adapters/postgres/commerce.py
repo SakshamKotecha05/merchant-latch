@@ -118,6 +118,23 @@ class PostgresCommerceStore:
             row = (await session.execute(statement)).one_or_none()
         return _to_catalog_variant(*row) if row is not None else None
 
+    async def lookup_idempotency(
+        self,
+        *,
+        buyer_key_id: str,
+        operation: str,
+        idempotency_key: str,
+        request_sha256: str,
+    ) -> CommerceMutationResult | None:
+        async with self._session_factory() as session, session.begin():
+            return await _idempotency_result(
+                session,
+                buyer_key_id=buyer_key_id,
+                operation=operation,
+                idempotency_key=idempotency_key,
+                request_sha256=request_sha256,
+            )
+
     async def create_checkout(
         self,
         *,

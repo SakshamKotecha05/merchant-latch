@@ -28,6 +28,15 @@ class CommerceStorePort(Protocol):
 
     async def get_variant(self, variant_id: str) -> CatalogVariant | None: ...
 
+    async def lookup_idempotency(
+        self,
+        *,
+        buyer_key_id: str,
+        operation: str,
+        idempotency_key: str,
+        request_sha256: str,
+    ) -> CommerceMutationResult | None: ...
+
     async def create_checkout(
         self,
         *,
