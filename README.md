@@ -13,7 +13,7 @@ It verifies Razorpay webhooks, records accepted events durably in PostgreSQL, an
 - Outbox dispatch and an Inngest function mounted at `/api/inngest`.
 - FastAPI liveness endpoint at `/health/live`.
 - Public UCP discovery at `/.well-known/ucp`.
-- Signed UCP checkout creation, update, standard cancellation, and retrieval with durable nonce and idempotency replay protection.
+- Signed UCP checkout creation, standard update, standard cancellation, and retrieval with explicit version negotiation plus durable nonce and idempotency replay protection.
 - SSRF-safe buyer profile resolution with persistent trust-on-first-use key pinning.
 - Append-only redacted UCP exchange evidence and a token-protected JSON inspector.
 - Merchant-controlled escalation handoff without creating a payment or order.
@@ -260,7 +260,7 @@ Operator sessions expire after one hour and are revoked on sign-out.
 ### Verification status
 
 The merchant journey has been exercised locally with PostgreSQL and a fake payment provider, including a verified capture and merchant order.
-The local gateway suite passes 334 tests, and the reference buyer passes 146 tests with its live Gemini smoke test skipped.
+The isolated PostgreSQL-backed gateway suite passes 345 tests, and the reference buyer passes 147 tests with one live Gemini test skipped.
 The merchant application also has browser-flow, lint, TypeScript, and production-build checks.
 
 The frozen deterministic held-out language baseline evaluated 50 language cases without Gemini.
@@ -277,10 +277,12 @@ Independent altered-file and wrong-key checks reject the bundle as expected.
 Pinned external UCP conformance was run locally against the production router boundary.
 The raw suite's placeholder request signature was correctly rejected by MerchantLatch's mandatory P-256 authentication.
 A local-only signing bridge then supplied valid ephemeral signatures without bypassing production verification.
-The authenticated full-suite run passed discovery and authoritative create-total calculation, while version negotiation, update semantics, and unimplemented optional commerce surfaces remain non-conformant.
+The authenticated capability-scoped core passed 15 tests with two upstream skips, covering discovery, version negotiation, create/get/cancel lifecycle, canceled-state rejection, create/update/cancel idempotency, and total structure.
+The unchanged 77-test full suite passed 19, failed 30, and skipped 28 because it also exercises payment completion and unadvertised discount, buyer-data, fulfillment, order, webhook, and simulation surfaces.
 
 A live `gemini-3.8-flash` run evaluated all 50 frozen held-out language cases through the stateless production client.
-Forty-five calls were classified as provider-unavailable, and a secret-safe diagnostic reproduced a connection timeout at the production five-second deadline.
+Forty-five calls were classified as provider-unavailable under the former five-second production deadline.
+After bounded retries and a longer hard deadline were added, an authorized live smoke request passed; the full 50-case live run was not repeated.
 The resulting low aggregate score is retained as availability-limited evidence and does not establish stable live-model accuracy.
 
 One INR 1.00 Razorpay Test Mode order was created and fetched successfully in `created` state.
