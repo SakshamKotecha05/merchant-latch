@@ -29,7 +29,7 @@ from acsa.security.ucp_signatures import (
     verify_request,
 )
 from acsa.services.commerce import CommerceService
-from acsa.ucp_profiles import BuyerIdentity, BuyerProfileError
+from acsa.ucp_profiles import BuyerIdentity, BuyerProfileError, parse_ucp_agent_version
 
 
 class BuyerResolver(Protocol):
@@ -606,6 +606,19 @@ async def _authenticate(
         key_id = parse_signature_key_id(signed_request)
     except UCPVerificationError:
         return _authentication_failure("signature_rejected")
+    try:
+        requested_version = parse_ucp_agent_version(request.headers.get("UCP-Agent", ""))
+    except BuyerProfileError:
+        return _authentication_failure("profile_rejected")
+    if requested_version is not None and requested_version != UCP_VERSION:
+        return AuthenticationFailure(
+            _error(
+                422,
+                "version_unsupported",
+                "The requested UCP version is not supported.",
+            ),
+            "request_rejected",
+        )
     try:
         identity = await resolver.resolve(request.headers.get("UCP-Agent", ""), key_id)
     except BuyerProfileError:

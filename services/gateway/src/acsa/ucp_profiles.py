@@ -26,6 +26,8 @@ from acsa.security.ucp_signatures import UCPVerificationError, import_public_jwk
 
 _JWK_FIELDS = ("alg", "crv", "kid", "kty", "use", "x", "y")
 _PROFILE_MEMBER = re.compile(r"(?:^|,)\s*profile\s*=")
+_VERSION_PARAMETER = re.compile(r";\s*version\b")
+_VERSION_VALUE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _MAX_PROFILE_BYTES = 131_072
 _PROFILE_TIMEOUT_SECONDS = 3.0
 _CACHE_SECONDS = 300.0
@@ -348,8 +350,11 @@ def _canonical_profile_url(value: str) -> tuple[str, SplitResult]:
     return urlunsplit(canonical), canonical
 
 
-def parse_profile_url(ucp_agent: str) -> str:
-    if len(_PROFILE_MEMBER.findall(ucp_agent)) != 1:
+def _parse_profile_item(ucp_agent: str) -> Item:
+    if (
+        len(_PROFILE_MEMBER.findall(ucp_agent)) != 1
+        or len(_VERSION_PARAMETER.findall(ucp_agent)) > 1
+    ):
         raise BuyerProfileError("profile_invalid")
     try:
         fields = Dictionary()
@@ -357,10 +362,29 @@ def parse_profile_url(ucp_agent: str) -> str:
         profile = fields["profile"]
     except (KeyError, UnicodeEncodeError, ValueError):
         raise BuyerProfileError("profile_invalid") from None
-    if not isinstance(profile, Item) or not isinstance(profile.value, str) or profile.params:
+    if not isinstance(profile, Item) or not isinstance(profile.value, str):
         raise BuyerProfileError("profile_invalid")
+    parameters = list(profile.params)
+    if any(parameter != "version" for parameter in parameters):
+        raise BuyerProfileError("profile_invalid")
+    if parameters:
+        version = profile.params["version"]
+        if not isinstance(version, str) or _VERSION_VALUE.fullmatch(version) is None:
+            raise BuyerProfileError("profile_invalid")
+    return profile
+
+
+def parse_profile_url(ucp_agent: str) -> str:
+    profile = _parse_profile_item(ucp_agent)
     canonical, _ = _canonical_profile_url(profile.value)
     return canonical
+
+
+def parse_ucp_agent_version(ucp_agent: str) -> str | None:
+    profile = _parse_profile_item(ucp_agent)
+    if "version" not in profile.params:
+        return None
+    return str(profile.params["version"])
 
 
 def is_public_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
