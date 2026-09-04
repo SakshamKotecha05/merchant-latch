@@ -27,7 +27,13 @@ class ClaimedJobPort(Protocol):
     def job_type(self) -> str: ...
 
     @property
+    def aggregate_id(self) -> str: ...
+
+    @property
     def payload(self) -> Mapping[str, Any]: ...
+
+    @property
+    def attempt_count(self) -> int: ...
 
 
 class OutboxClaimState(StrEnum):
@@ -47,3 +53,11 @@ class OutboxWorkerStorePort(Protocol):
     async def claim(self, *, job_id: UUID, worker_id: str) -> OutboxClaimResult: ...
 
     async def complete(self, *, job_id: UUID, worker_id: str) -> bool: ...
+
+    async def reschedule(
+        self,
+        *,
+        job_id: UUID,
+        worker_id: str,
+        delay_seconds: int,
+    ) -> bool: ...

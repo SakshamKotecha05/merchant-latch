@@ -137,3 +137,29 @@ class PostgresOutboxStore:
                 .returning(OutboxJob.id)
             )
             return result.scalar_one_or_none() is not None
+
+    async def reschedule(
+        self,
+        *,
+        job_id: UUID,
+        worker_id: str,
+        delay_seconds: int,
+    ) -> bool:
+        async with self._session_factory() as session, session.begin():
+            result = await session.execute(
+                update(OutboxJob)
+                .where(
+                    OutboxJob.id == job_id,
+                    OutboxJob.locked_by == worker_id,
+                    OutboxJob.completed_at.is_(None),
+                    OutboxJob.dead_lettered_at.is_(None),
+                )
+                .values(
+                    available_at=func.now() + timedelta(seconds=delay_seconds),
+                    dispatched_at=None,
+                    locked_by=None,
+                    lock_expires_at=None,
+                )
+                .returning(OutboxJob.id)
+            )
+            return result.scalar_one_or_none() is not None

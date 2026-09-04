@@ -386,6 +386,28 @@ class PaymentAttempt(Base):
     )
 
 
+class ProviderOrder(Base):
+    __tablename__ = "provider_orders"
+    __table_args__ = (
+        CheckConstraint("amount_minor > 0", name="ck_provider_order_amount_positive"),
+        CheckConstraint("currency = 'INR'", name="ck_provider_order_currency_inr"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), primary_key=True, default=uuid4)
+    attempt_id: Mapped[str] = mapped_column(
+        ForeignKey("payment_attempts.id", ondelete="RESTRICT"), nullable=False, unique=True
+    )
+    provider_order_id: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    receipt: Mapped[str] = mapped_column(String(40), nullable=False, unique=True)
+    amount_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    notes: Mapped[dict[str, str]] = mapped_column(JSONB, nullable=False)
+    recovered: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class InventoryLease(Base):
     __tablename__ = "inventory_leases"
     __table_args__ = (

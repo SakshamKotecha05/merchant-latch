@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 
+import httpx
 import inngest
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
@@ -11,13 +12,16 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from acsa.adapters.inngest.dispatcher import InngestJobDispatcher
 from acsa.adapters.postgres.commerce import PostgresCommerceStore
 from acsa.adapters.postgres.outbox import PostgresOutboxStore
+from acsa.adapters.postgres.payment_orders import PostgresPaymentOrderStore
 from acsa.adapters.postgres.webhooks import PostgresWebhookStore
+from acsa.adapters.razorpay.client import RazorpayClient
 from acsa.application import create_application
 from acsa.config import ConfigurationError, load_gateway_settings
 from acsa.inngest_functions import create_outbox_ready_function, create_outbox_sweep_function
 from acsa.security.continue_tokens import issue_continue_token
 from acsa.security.ucp_signatures import import_public_jwk
 from acsa.services.commerce import CommerceService
+from acsa.services.payment_orders import PaymentOrderService
 from acsa.web.catalog import create_catalog_router
 from acsa.web.merchant_checkout import create_merchant_checkout_router
 from acsa.web.ucp_checkout import create_ucp_checkout_router
@@ -30,6 +34,15 @@ def create_runtime_application() -> FastAPI:
     commerce_store = PostgresCommerceStore(session_factory)
     outbox_store = PostgresOutboxStore(session_factory)
     webhook_store = PostgresWebhookStore(session_factory)
+    provider_http_client = httpx.AsyncClient(timeout=10)
+    payment_order_service = PaymentOrderService(
+        store=PostgresPaymentOrderStore(session_factory),
+        provider=RazorpayClient(
+            key_id=settings.razorpay_key_id,
+            key_secret=settings.razorpay_key_secret.get_secret_value(),
+            http_client=provider_http_client,
+        ),
+    )
     inngest_client = inngest.Inngest(
         app_id="acsa-gateway",
         event_key=settings.inngest_event_key.get_secret_value(),
@@ -43,7 +56,12 @@ def create_runtime_application() -> FastAPI:
         mount_inngest=True,
         inngest_client=inngest_client,
         inngest_functions=[
-            create_outbox_ready_function(inngest_client, outbox_store, webhook_store),
+            create_outbox_ready_function(
+                inngest_client,
+                outbox_store,
+                webhook_store,
+                payment_order_service=payment_order_service,
+            ),
             create_outbox_sweep_function(
                 inngest_client,
                 outbox_store,
@@ -51,6 +69,7 @@ def create_runtime_application() -> FastAPI:
             ),
         ],
     )
+    app.router.add_event_handler("shutdown", provider_http_client.aclose)
     merchant_private_key = load_pem_private_key(
         settings.ucp_merchant_private_key.get_secret_value().encode("utf-8"),
         password=None,

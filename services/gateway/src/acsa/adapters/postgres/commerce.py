@@ -568,7 +568,7 @@ class PostgresCommerceStore:
                         "checkout_id": record.id,
                         "snapshot_checksum": context.snapshot.checksum,
                     },
-                    max_attempts=1,
+                    max_attempts=6,
                 )
             )
             await _append_audit(

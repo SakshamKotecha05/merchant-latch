@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Protocol
 from uuid import UUID
 
 import inngest
@@ -11,12 +12,20 @@ from acsa.ports.jobs import (
     OutboxWorkerStorePort,
 )
 from acsa.ports.webhooks import WebhookProcessingStorePort
+from acsa.services.payment_orders import PaymentOrderOutcome
+
+_ORDER_RETRY_DELAYS = (2, 5, 10, 20, 40)
+
+
+class PaymentOrderServicePort(Protocol):
+    async def process(self, attempt_id: str) -> PaymentOrderOutcome: ...
 
 
 def create_outbox_ready_function(
     client: inngest.Inngest,
     outbox_store: OutboxWorkerStorePort,
     webhook_store: WebhookProcessingStorePort,
+    payment_order_service: PaymentOrderServicePort | None = None,
 ) -> inngest.Function[dict[str, str]]:
     @client.create_function(
         fn_id="outbox-ready",
@@ -38,6 +47,29 @@ def create_outbox_ready_function(
         if claim.state is not OutboxClaimState.CLAIMED or claim.job is None:
             raise RuntimeError("Outbox job is not available")
         job = claim.job
+        if job.job_type == "create_provider_order":
+            if payment_order_service is None:
+                raise ValueError("Payment Order service is unavailable")
+            attempt_id = job.payload.get("attempt_id")
+            if not isinstance(attempt_id, str) or attempt_id != job.aggregate_id:
+                raise ValueError("Invalid provider Order job payload")
+            outcome = await payment_order_service.process(attempt_id)
+            if outcome is PaymentOrderOutcome.RECONCILING:
+                retry_index = job.attempt_count - 1
+                if retry_index >= len(_ORDER_RETRY_DELAYS):
+                    raise RuntimeError("Provider Order reconciliation exhausted")
+                if not await outbox_store.reschedule(
+                    job_id=job.id,
+                    worker_id=context.run_id,
+                    delay_seconds=_ORDER_RETRY_DELAYS[retry_index],
+                ):
+                    raise RuntimeError("Unable to reschedule outbox job")
+                return {"status": "retry_scheduled"}
+            if outcome is PaymentOrderOutcome.NOT_FOUND:
+                raise ValueError("Referenced payment attempt does not exist")
+            if not await outbox_store.complete(job_id=job.id, worker_id=context.run_id):
+                raise RuntimeError("Unable to complete outbox job")
+            return {"status": "completed"}
         if job.job_type != "process_razorpay_webhook":
             raise ValueError("Unsupported outbox job type")
 

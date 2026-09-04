@@ -4,6 +4,7 @@ from collections.abc import Mapping
 
 import httpx
 
+from acsa.domain.payments import ProviderPaymentRecord
 from acsa.domain.receipts import ProviderOrderCandidate
 
 
@@ -48,7 +49,9 @@ class RazorpayClient:
             },
         )
         self._raise_for_provider_error(response, operation="create_order")
-        return _parse_order(response.json(), operation="create_order")
+        return _parse_order(
+            _json_body(response, operation="create_order"), operation="create_order"
+        )
 
     async def fetch_orders_by_receipt(self, receipt: str) -> list[ProviderOrderCandidate]:
         response = await self._http_client.get(
@@ -57,16 +60,44 @@ class RazorpayClient:
             params={"receipt": receipt, "count": 100},
         )
         self._raise_for_provider_error(response, operation="fetch_orders")
-        body = response.json()
+        body = _json_body(response, operation="fetch_orders")
         items = body.get("items") if isinstance(body, dict) else None
         if not isinstance(items, list):
             raise RazorpayProviderError(status_code=response.status_code, operation="fetch_orders")
         return [_parse_order(item, operation="fetch_orders") for item in items]
 
+    async def fetch_order(self, order_id: str) -> ProviderOrderCandidate:
+        response = await self._http_client.get(
+            f"{self._base_url}/orders/{order_id}",
+            auth=self._auth,
+        )
+        self._raise_for_provider_error(response, operation="fetch_order")
+        return _parse_order(_json_body(response, operation="fetch_order"), operation="fetch_order")
+
+    async def fetch_payment(self, payment_id: str) -> ProviderPaymentRecord:
+        response = await self._http_client.get(
+            f"{self._base_url}/payments/{payment_id}",
+            auth=self._auth,
+        )
+        self._raise_for_provider_error(response, operation="fetch_payment")
+        return _parse_payment(
+            _json_body(response, operation="fetch_payment"), operation="fetch_payment"
+        )
+
     @staticmethod
     def _raise_for_provider_error(response: httpx.Response, *, operation: str) -> None:
         if response.is_error:
             raise RazorpayProviderError(status_code=response.status_code, operation=operation)
+
+
+def _json_body(response: httpx.Response, *, operation: str) -> object:
+    try:
+        return response.json()
+    except ValueError:
+        raise RazorpayProviderError(
+            status_code=response.status_code,
+            operation=operation,
+        ) from None
 
 
 def _parse_order(payload: object, *, operation: str) -> ProviderOrderCandidate:
@@ -93,4 +124,33 @@ def _parse_order(payload: object, *, operation: str) -> ProviderOrderCandidate:
         amount_minor=amount,
         currency=currency,
         notes=notes,
+    )
+
+
+def _parse_payment(payload: object, *, operation: str) -> ProviderPaymentRecord:
+    if not isinstance(payload, dict):
+        raise RazorpayProviderError(status_code=None, operation=operation)
+    payment_id = payload.get("id")
+    order_id = payload.get("order_id")
+    amount = payload.get("amount")
+    currency = payload.get("currency")
+    status = payload.get("status")
+    captured = payload.get("captured")
+    if (
+        not isinstance(payment_id, str)
+        or not isinstance(order_id, str)
+        or not isinstance(amount, int)
+        or isinstance(amount, bool)
+        or not isinstance(currency, str)
+        or not isinstance(status, str)
+        or not isinstance(captured, bool)
+    ):
+        raise RazorpayProviderError(status_code=None, operation=operation)
+    return ProviderPaymentRecord(
+        payment_id=payment_id,
+        order_id=order_id,
+        amount_minor=amount,
+        currency=currency,
+        status=status,
+        captured=captured,
     )
