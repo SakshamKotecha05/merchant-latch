@@ -8,8 +8,18 @@ from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from acsa.adapters.postgres.models import OutboxJob, WebhookEvent
-from acsa.ports.webhooks import WebhookInsertResult
+from acsa.adapters.postgres.models import (
+    OutboxJob,
+    PaymentAttempt,
+    ProviderOrder,
+    Refund,
+    WebhookEvent,
+)
+from acsa.ports.webhooks import (
+    WebhookFinalizationWork,
+    WebhookInsertResult,
+    WebhookRefundWork,
+)
 
 
 class PostgresWebhookStore:
@@ -24,7 +34,7 @@ class PostgresWebhookStore:
         raw_payload: bytes,
         payload_hash: str,
     ) -> WebhookInsertResult:
-        payment_id, order_id = _extract_provider_references(raw_payload)
+        payment_id, order_id, refund_id = _extract_provider_references(raw_payload)
         webhook_id = uuid4()
         job_id = uuid4()
 
@@ -39,6 +49,7 @@ class PostgresWebhookStore:
                     payload_hash=payload_hash,
                     payment_id=payment_id,
                     order_id=order_id,
+                    refund_id=refund_id,
                 )
                 .on_conflict_do_nothing(index_elements=[WebhookEvent.event_id])
                 .returning(WebhookEvent.id)
@@ -57,6 +68,54 @@ class PostgresWebhookStore:
             )
 
         return WebhookInsertResult(created=True, job_id=job_id)
+
+    async def load_finalization_work(
+        self, webhook_event_id: UUID
+    ) -> WebhookFinalizationWork | None:
+        async with self._session_factory() as session:
+            event = await session.get(WebhookEvent, webhook_event_id)
+            if (
+                event is None
+                or event.event_name not in {"payment.captured", "order.paid"}
+                or event.payment_id is None
+                or event.order_id is None
+            ):
+                return None
+            attempt_id = await session.scalar(
+                select(ProviderOrder.attempt_id).where(
+                    ProviderOrder.provider_order_id == event.order_id
+                )
+            )
+            if attempt_id is None:
+                return None
+            return WebhookFinalizationWork(
+                attempt_id=attempt_id,
+                payment_id=event.payment_id,
+                order_id=event.order_id,
+            )
+
+    async def load_refund_work(self, webhook_event_id: UUID) -> WebhookRefundWork | None:
+        async with self._session_factory() as session:
+            event = await session.get(WebhookEvent, webhook_event_id)
+            if (
+                event is None
+                or not event.event_name.startswith("refund.")
+                or event.refund_id is None
+                or event.payment_id is None
+            ):
+                return None
+            attempt_id = await session.scalar(
+                select(Refund.attempt_id).where(Refund.provider_refund_id == event.refund_id)
+            )
+            if attempt_id is None:
+                attempt_id = await session.scalar(
+                    select(PaymentAttempt.id).where(
+                        PaymentAttempt.provider_payment_id == event.payment_id
+                    )
+                )
+            if attempt_id is None:
+                return None
+            return WebhookRefundWork(attempt_id=attempt_id, refund_id=event.refund_id)
 
     async def mark_processed(self, webhook_event_id: UUID) -> bool:
         async with self._session_factory() as session, session.begin():
@@ -77,14 +136,18 @@ class PostgresWebhookStore:
             return existing_id is not None
 
 
-def _extract_provider_references(raw_payload: bytes) -> tuple[str | None, str | None]:
+def _extract_provider_references(
+    raw_payload: bytes,
+) -> tuple[str | None, str | None, str | None]:
     payload: dict[str, Any] = orjson.loads(raw_payload)
     nested_payload = payload.get("payload", {})
     payment = _entity(nested_payload, "payment")
     order = _entity(nested_payload, "order")
-    payment_id = _string_or_none(payment.get("id"))
+    refund = _entity(nested_payload, "refund")
+    payment_id = _string_or_none(payment.get("id")) or _string_or_none(refund.get("payment_id"))
     order_id = _string_or_none(payment.get("order_id")) or _string_or_none(order.get("id"))
-    return payment_id, order_id
+    refund_id = _string_or_none(refund.get("id"))
+    return payment_id, order_id, refund_id
 
 
 def _entity(payload: object, key: str) -> dict[str, Any]:

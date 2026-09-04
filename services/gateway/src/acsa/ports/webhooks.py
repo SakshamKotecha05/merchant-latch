@@ -11,6 +11,19 @@ class WebhookInsertResult:
     job_id: UUID | None
 
 
+@dataclass(frozen=True, slots=True)
+class WebhookFinalizationWork:
+    attempt_id: str
+    payment_id: str
+    order_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class WebhookRefundWork:
+    attempt_id: str
+    refund_id: str
+
+
 class WebhookStorePort(Protocol):
     async def insert_verified_event(
         self,
@@ -23,4 +36,10 @@ class WebhookStorePort(Protocol):
 
 
 class WebhookProcessingStorePort(Protocol):
+    async def load_finalization_work(
+        self, webhook_event_id: UUID
+    ) -> WebhookFinalizationWork | None: ...
+
+    async def load_refund_work(self, webhook_event_id: UUID) -> WebhookRefundWork | None: ...
+
     async def mark_processed(self, webhook_event_id: UUID) -> bool: ...

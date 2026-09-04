@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from typing import Any, Protocol
 from uuid import UUID
@@ -27,7 +28,13 @@ class ClaimedJobPort(Protocol):
     def job_type(self) -> str: ...
 
     @property
+    def aggregate_id(self) -> str: ...
+
+    @property
     def payload(self) -> Mapping[str, Any]: ...
+
+    @property
+    def attempt_count(self) -> int: ...
 
 
 class OutboxClaimState(StrEnum):
@@ -35,6 +42,12 @@ class OutboxClaimState(StrEnum):
     LEASED = "leased"
     COMPLETED = "completed"
     UNAVAILABLE = "unavailable"
+
+
+class OutboxFailureOutcome(StrEnum):
+    RETRY_SCHEDULED = "retry_scheduled"
+    DEAD_LETTERED = "dead_lettered"
+    REJECTED = "rejected"
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,3 +60,20 @@ class OutboxWorkerStorePort(Protocol):
     async def claim(self, *, job_id: UUID, worker_id: str) -> OutboxClaimResult: ...
 
     async def complete(self, *, job_id: UUID, worker_id: str) -> bool: ...
+
+    async def reschedule(
+        self,
+        *,
+        job_id: UUID,
+        worker_id: str,
+        delay_seconds: int,
+    ) -> bool: ...
+
+    async def fail(
+        self,
+        *,
+        job_id: UUID,
+        worker_id: str,
+        error_code: str,
+        retry_at: datetime | None,
+    ) -> OutboxFailureOutcome: ...
