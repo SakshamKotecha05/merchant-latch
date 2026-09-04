@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from acsa.adapters.inngest.dispatcher import InngestJobDispatcher
 from acsa.adapters.postgres.commerce import PostgresCommerceStore
 from acsa.adapters.postgres.outbox import PostgresOutboxStore
+from acsa.adapters.postgres.payment_finalization import PostgresPaymentFinalizationStore
 from acsa.adapters.postgres.payment_orders import PostgresPaymentOrderStore
 from acsa.adapters.postgres.webhooks import PostgresWebhookStore
 from acsa.adapters.razorpay.client import RazorpayClient
@@ -21,9 +22,11 @@ from acsa.inngest_functions import create_outbox_ready_function, create_outbox_s
 from acsa.security.continue_tokens import issue_continue_token
 from acsa.security.ucp_signatures import import_public_jwk
 from acsa.services.commerce import CommerceService
+from acsa.services.payment_finalization import PaymentFinalizationService
 from acsa.services.payment_orders import PaymentOrderService
 from acsa.web.catalog import create_catalog_router
 from acsa.web.merchant_checkout import create_merchant_checkout_router
+from acsa.web.payment_confirmation import create_payment_confirmation_router
 from acsa.web.ucp_checkout import create_ucp_checkout_router
 
 
@@ -35,13 +38,20 @@ def create_runtime_application() -> FastAPI:
     outbox_store = PostgresOutboxStore(session_factory)
     webhook_store = PostgresWebhookStore(session_factory)
     provider_http_client = httpx.AsyncClient(timeout=10)
+    provider_client = RazorpayClient(
+        key_id=settings.razorpay_key_id,
+        key_secret=settings.razorpay_key_secret.get_secret_value(),
+        http_client=provider_http_client,
+    )
     payment_order_service = PaymentOrderService(
         store=PostgresPaymentOrderStore(session_factory),
-        provider=RazorpayClient(
-            key_id=settings.razorpay_key_id,
-            key_secret=settings.razorpay_key_secret.get_secret_value(),
-            http_client=provider_http_client,
-        ),
+        provider=provider_client,
+    )
+    payment_finalization_service = PaymentFinalizationService(
+        store=PostgresPaymentFinalizationStore(session_factory),
+        provider=provider_client,
+        provider_account_id=settings.razorpay_key_id,
+        checkout_secret=settings.razorpay_key_secret.get_secret_value(),
     )
     inngest_client = inngest.Inngest(
         app_id="acsa-gateway",
@@ -61,6 +71,7 @@ def create_runtime_application() -> FastAPI:
                 outbox_store,
                 webhook_store,
                 payment_order_service=payment_order_service,
+                payment_finalization_service=payment_finalization_service,
             ),
             create_outbox_sweep_function(
                 inngest_client,
@@ -107,6 +118,7 @@ def create_runtime_application() -> FastAPI:
             merchant_public_key=merchant_private_key.public_key(),
         )
     )
+    app.include_router(create_payment_confirmation_router(payment_finalization_service))
     return app
 
 

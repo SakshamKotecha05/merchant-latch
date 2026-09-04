@@ -8,8 +8,8 @@ from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from acsa.adapters.postgres.models import OutboxJob, WebhookEvent
-from acsa.ports.webhooks import WebhookInsertResult
+from acsa.adapters.postgres.models import OutboxJob, ProviderOrder, WebhookEvent
+from acsa.ports.webhooks import WebhookFinalizationWork, WebhookInsertResult
 
 
 class PostgresWebhookStore:
@@ -57,6 +57,31 @@ class PostgresWebhookStore:
             )
 
         return WebhookInsertResult(created=True, job_id=job_id)
+
+    async def load_finalization_work(
+        self, webhook_event_id: UUID
+    ) -> WebhookFinalizationWork | None:
+        async with self._session_factory() as session:
+            event = await session.get(WebhookEvent, webhook_event_id)
+            if (
+                event is None
+                or event.event_name not in {"payment.captured", "order.paid"}
+                or event.payment_id is None
+                or event.order_id is None
+            ):
+                return None
+            attempt_id = await session.scalar(
+                select(ProviderOrder.attempt_id).where(
+                    ProviderOrder.provider_order_id == event.order_id
+                )
+            )
+            if attempt_id is None:
+                return None
+            return WebhookFinalizationWork(
+                attempt_id=attempt_id,
+                payment_id=event.payment_id,
+                order_id=event.order_id,
+            )
 
     async def mark_processed(self, webhook_event_id: UUID) -> bool:
         async with self._session_factory() as session, session.begin():

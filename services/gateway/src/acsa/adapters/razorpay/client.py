@@ -4,7 +4,7 @@ from collections.abc import Mapping
 
 import httpx
 
-from acsa.domain.payments import ProviderPaymentRecord
+from acsa.domain.payments import ProviderOrderRecord, ProviderPaymentRecord
 from acsa.domain.receipts import ProviderOrderCandidate
 
 
@@ -66,13 +66,15 @@ class RazorpayClient:
             raise RazorpayProviderError(status_code=response.status_code, operation="fetch_orders")
         return [_parse_order(item, operation="fetch_orders") for item in items]
 
-    async def fetch_order(self, order_id: str) -> ProviderOrderCandidate:
+    async def fetch_order(self, order_id: str) -> ProviderOrderRecord:
         response = await self._http_client.get(
             f"{self._base_url}/orders/{order_id}",
             auth=self._auth,
         )
         self._raise_for_provider_error(response, operation="fetch_order")
-        return _parse_order(_json_body(response, operation="fetch_order"), operation="fetch_order")
+        return _parse_order_record(
+            _json_body(response, operation="fetch_order"), operation="fetch_order"
+        )
 
     async def fetch_payment(self, payment_id: str) -> ProviderPaymentRecord:
         response = await self._http_client.get(
@@ -153,4 +155,19 @@ def _parse_payment(payload: object, *, operation: str) -> ProviderPaymentRecord:
         currency=currency,
         status=status,
         captured=captured,
+    )
+
+
+def _parse_order_record(payload: object, *, operation: str) -> ProviderOrderRecord:
+    candidate = _parse_order(payload, operation=operation)
+    status = payload.get("status") if isinstance(payload, dict) else None
+    if not isinstance(status, str):
+        raise RazorpayProviderError(status_code=None, operation=operation)
+    return ProviderOrderRecord(
+        order_id=candidate.order_id,
+        receipt=candidate.receipt,
+        amount_minor=candidate.amount_minor,
+        currency=candidate.currency,
+        status=status,
+        notes=candidate.notes,
     )

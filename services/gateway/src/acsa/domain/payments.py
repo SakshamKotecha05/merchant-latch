@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 
@@ -13,3 +14,13 @@ class ProviderPaymentRecord:
     currency: str
     status: str
     captured: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderOrderRecord:
+    order_id: str
+    receipt: str
+    amount_minor: int
+    currency: str
+    status: str
+    notes: Mapping[str, str]

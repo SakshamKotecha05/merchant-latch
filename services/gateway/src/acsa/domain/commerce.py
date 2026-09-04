@@ -249,6 +249,7 @@ _ATTEMPT_TRANSITIONS = frozenset(
         (PaymentAttemptState.AWAITING_PAYMENT, PaymentAttemptState.CANCELED),
         (PaymentAttemptState.AWAITING_PAYMENT, PaymentAttemptState.EXPIRED),
         (PaymentAttemptState.RECONCILING, PaymentAttemptState.AWAITING_PAYMENT),
+        (PaymentAttemptState.RECONCILING, PaymentAttemptState.VERIFYING),
         (PaymentAttemptState.RECONCILING, PaymentAttemptState.MANUAL_REVIEW),
         (PaymentAttemptState.RECONCILING, PaymentAttemptState.FAILED),
         (PaymentAttemptState.VERIFYING, PaymentAttemptState.PAID),

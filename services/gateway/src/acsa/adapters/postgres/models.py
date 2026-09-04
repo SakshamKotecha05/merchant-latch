@@ -362,6 +362,11 @@ class PaymentAttempt(Base):
             name="ck_attempt_state_valid",
         ),
         UniqueConstraint("checkout_id", "attempt_version", name="uq_attempt_checkout_version"),
+        UniqueConstraint(
+            "provider_account_id",
+            "provider_payment_id",
+            name="uq_payment_attempt_provider_payment",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -378,6 +383,10 @@ class PaymentAttempt(Base):
     amount_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="INR")
     provider_uncertain: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    provider_account_id: Mapped[str | None] = mapped_column(String(128))
+    provider_payment_id: Mapped[str | None] = mapped_column(String(128))
+    payment_evidence_digest: Mapped[str | None] = mapped_column(String(64))
+    payment_evidence_source: Mapped[str | None] = mapped_column(String(32))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -403,6 +412,37 @@ class ProviderOrder(Base):
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     notes: Mapped[dict[str, str]] = mapped_column(JSONB, nullable=False)
     recovered: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class MerchantOrder(Base):
+    __tablename__ = "merchant_orders"
+    __table_args__ = (
+        CheckConstraint("amount_minor > 0", name="ck_merchant_order_amount_positive"),
+        CheckConstraint("currency = 'INR'", name="ck_merchant_order_currency_inr"),
+        UniqueConstraint(
+            "provider_account_id",
+            "provider_payment_id",
+            name="uq_merchant_order_provider_payment",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), primary_key=True, default=uuid4)
+    checkout_id: Mapped[str] = mapped_column(
+        ForeignKey("checkout_sessions.id", ondelete="RESTRICT"), nullable=False, unique=True
+    )
+    attempt_id: Mapped[str] = mapped_column(
+        ForeignKey("payment_attempts.id", ondelete="RESTRICT"), nullable=False, unique=True
+    )
+    provider_account_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    provider_order_id: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    provider_payment_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    amount_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    evidence_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    evidence_source: Mapped[str] = mapped_column(String(32), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
