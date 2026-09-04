@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from uuid import uuid4
 
 import httpx
 import orjson
@@ -13,29 +12,28 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
-from acsa.domain.ucp_checkout import SHOPPING_SERVICE_PATH, UCP_VERSION, create_escalated_checkout
-from acsa.ports.ucp_checkouts import CheckoutPersistenceOutcome, UCPCheckoutStorePort
+from acsa.domain.commerce import CommerceMutationOutcome, CommerceMutationResult, RequestedLine
+from acsa.domain.ucp_checkout import SHOPPING_SERVICE_PATH, UCP_VERSION
 from acsa.security.ucp_signatures import (
     UCPVerificationError,
     export_public_jwk,
     sign_response,
     verify_request,
 )
+from acsa.services.commerce import CommerceService
 
 
 def create_ucp_checkout_router(
     *,
-    store: UCPCheckoutStorePort,
+    commerce_service: CommerceService,
     buyer_public_key: ec.EllipticCurvePublicKey,
     buyer_key_id: str,
     merchant_private_key: ec.EllipticCurvePrivateKey,
     merchant_key_id: str,
     public_gateway_url: str,
-    public_merchant_url: str,
 ) -> APIRouter:
     router = APIRouter()
     base_url = public_gateway_url.rstrip("/")
-    merchant_url = public_merchant_url.rstrip("/")
 
     @router.get("/.well-known/ucp")
     async def discovery() -> JSONResponse:
@@ -117,58 +115,147 @@ def create_ucp_checkout_router(
             return verified
         try:
             body = orjson.loads(raw_body)
-            line_items = body["line_items"]
-            if not isinstance(line_items, list) or not line_items:
-                raise ValueError
+            requested_lines = _requested_lines(body)
+            budget_minor = _budget_minor(body)
         except (orjson.JSONDecodeError, KeyError, TypeError, ValueError):
             return _error(400, "invalid_request", "The checkout request must include line_items.")
-        idempotency_key = request.headers["Idempotency-Key"]
-        checkout_id = f"chk_{uuid4().hex}"
-        checkout = create_escalated_checkout(
-            checkout_id=checkout_id,
-            buyer_key_id=buyer_key_id,
-            line_items=line_items,
-            continue_url=f"{merchant_url}/checkout/{checkout_id}",
-            expires_at=datetime.now(UTC) + timedelta(minutes=30),
-        )
-        result = await store.create_or_replay(
+        result = await commerce_service.create_checkout(
             buyer_key_id=buyer_key_id,
             nonce=verified.nonce,
             nonce_expires_at=verified.expires_at,
-            idempotency_key=idempotency_key,
+            idempotency_key=request.headers["Idempotency-Key"],
             request_sha256=hashlib.sha256(raw_body).hexdigest(),
-            checkout=checkout,
+            requested_lines=requested_lines,
+            budget_minor=budget_minor,
         )
-        if result.outcome in {
-            CheckoutPersistenceOutcome.CONFLICT,
-            CheckoutPersistenceOutcome.NONCE_REPLAY,
-        }:
-            return _error(
-                409, "replay_conflict", "The checkout request conflicts with a prior request."
-            )
-        if result.checkout is None:
-            return _error(500, "checkout_unavailable", "The checkout is unavailable.")
-        return _signed_response(
-            result.checkout.response_body,
-            201 if result.outcome is CheckoutPersistenceOutcome.CREATED else 200,
-            request,
-            merchant_private_key,
-            merchant_key_id,
+        return _mutation_response(
+            result, request, merchant_private_key, merchant_key_id, created_status=201
         )
+
+    @router.put(f"{SHOPPING_SERVICE_PATH}/checkout-sessions/{{checkout_id}}")
+    async def update_checkout(checkout_id: str, request: Request) -> Response:
+        raw_body = await request.body()
+        verified = _verify(request, raw_body, base_url, buyer_public_key, buyer_key_id)
+        if isinstance(verified, JSONResponse):
+            return verified
+        try:
+            body = orjson.loads(raw_body)
+            expected_version = _expected_version(body)
+            requested_lines = _requested_lines(body)
+            budget_minor = _budget_minor(body)
+        except (orjson.JSONDecodeError, KeyError, TypeError, ValueError):
+            return _error(400, "invalid_request", "The checkout update is invalid.")
+        result = await commerce_service.update_checkout(
+            checkout_id=checkout_id,
+            buyer_key_id=buyer_key_id,
+            nonce=verified.nonce,
+            nonce_expires_at=verified.expires_at,
+            expected_version=expected_version,
+            idempotency_key=request.headers["Idempotency-Key"],
+            request_sha256=hashlib.sha256(raw_body).hexdigest(),
+            requested_lines=requested_lines,
+            budget_minor=budget_minor,
+        )
+        return _mutation_response(result, request, merchant_private_key, merchant_key_id)
+
+    @router.delete(f"{SHOPPING_SERVICE_PATH}/checkout-sessions/{{checkout_id}}")
+    async def cancel_checkout(checkout_id: str, request: Request) -> Response:
+        raw_body = await request.body()
+        verified = _verify(request, raw_body, base_url, buyer_public_key, buyer_key_id)
+        if isinstance(verified, JSONResponse):
+            return verified
+        try:
+            body = orjson.loads(raw_body)
+            expected_version = _expected_version(body)
+        except (orjson.JSONDecodeError, KeyError, TypeError, ValueError):
+            return _error(400, "invalid_request", "The checkout cancellation is invalid.")
+        result = await commerce_service.cancel_checkout(
+            checkout_id=checkout_id,
+            buyer_key_id=buyer_key_id,
+            nonce=verified.nonce,
+            nonce_expires_at=verified.expires_at,
+            expected_version=expected_version,
+            idempotency_key=request.headers["Idempotency-Key"],
+            request_sha256=hashlib.sha256(raw_body).hexdigest(),
+        )
+        return _mutation_response(result, request, merchant_private_key, merchant_key_id)
 
     @router.get(f"{SHOPPING_SERVICE_PATH}/checkout-sessions/{{checkout_id}}")
     async def get_checkout(checkout_id: str, request: Request) -> Response:
         verified = _verify(request, b"", base_url, buyer_public_key, buyer_key_id)
         if isinstance(verified, JSONResponse):
             return verified
-        checkout = await store.get(checkout_id)
+        checkout = await commerce_service.get_checkout(checkout_id, buyer_key_id=buyer_key_id)
         if checkout is None:
             return _error(404, "checkout_not_found", "The checkout does not exist.")
         return _signed_response(
-            checkout.response_body, 200, request, merchant_private_key, merchant_key_id
+            checkout.canonical_bytes, 200, request, merchant_private_key, merchant_key_id
         )
 
     return router
+
+
+def _requested_lines(body: object) -> list[RequestedLine]:
+    if not isinstance(body, dict):
+        raise ValueError
+    line_items = body["line_items"]
+    if not isinstance(line_items, list) or not line_items:
+        raise ValueError
+    requested: list[RequestedLine] = []
+    for line in line_items:
+        if not isinstance(line, dict) or not isinstance(line.get("item"), dict):
+            raise ValueError
+        variant_id = line["item"].get("id")
+        quantity = line.get("quantity")
+        if not isinstance(variant_id, str) or not variant_id:
+            raise ValueError
+        if isinstance(quantity, bool) or not isinstance(quantity, int):
+            raise ValueError
+        requested.append(RequestedLine(variant_id=variant_id, quantity=quantity))
+    return requested
+
+
+def _budget_minor(body: object) -> int | None:
+    if not isinstance(body, dict):
+        raise ValueError
+    value = body.get("budget_minor")
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError
+    return int(value)
+
+
+def _expected_version(body: object) -> int:
+    if not isinstance(body, dict):
+        raise ValueError
+    value = body.get("expected_version")
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError
+    return int(value)
+
+
+def _mutation_response(
+    result: CommerceMutationResult,
+    request: Request,
+    private_key: ec.EllipticCurvePrivateKey,
+    key_id: str,
+    *,
+    created_status: int = 200,
+) -> Response:
+    if result.outcome is CommerceMutationOutcome.CONFLICT:
+        return _error(409, "replay_conflict", "The request conflicts with a prior request.")
+    if result.outcome is CommerceMutationOutcome.STALE:
+        return _error(409, "checkout_version_conflict", "The checkout version is stale.")
+    if result.outcome is CommerceMutationOutcome.NOT_FOUND:
+        return _error(404, "checkout_not_found", "The checkout does not exist.")
+    if result.outcome is CommerceMutationOutcome.BLOCKED:
+        rule_id = result.rule_ids[0] if result.rule_ids else "checkout_blocked"
+        return _error(422, rule_id, "The merchant policy blocked this checkout request.")
+    if result.response_body is None:
+        return _error(500, "checkout_unavailable", "The checkout is unavailable.")
+    status_code = created_status if result.outcome is CommerceMutationOutcome.CREATED else 200
+    return _signed_response(result.response_body, status_code, request, private_key, key_id)
 
 
 def _verify(

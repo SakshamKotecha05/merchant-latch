@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-import orjson
+from acsa.domain.canonical import canonical_json_bytes
 
 UCP_VERSION = "2026-04-08"
 SHOPPING_SERVICE_PATH = "/ucp/shopping"
@@ -23,11 +23,6 @@ class StoredCheckout:
     expires_at: datetime
     resource: dict[str, Any]
     response_body: bytes
-
-
-def canonical_json_bytes(value: dict[str, Any]) -> bytes:
-    """Serialize a UCP resource once for storage, response, and replay."""
-    return orjson.dumps(value, option=orjson.OPT_SORT_KEYS)
 
 
 def create_escalated_checkout(
