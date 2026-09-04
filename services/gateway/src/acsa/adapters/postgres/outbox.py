@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -10,7 +11,10 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from acsa.adapters.postgres.models import OutboxJob
-from acsa.ports.jobs import OutboxClaimResult, OutboxClaimState
+from acsa.ports.jobs import OutboxClaimResult, OutboxClaimState, OutboxFailureOutcome
+from acsa.services.evidence import append_audit_event
+
+_STABLE_ERROR_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,3 +167,47 @@ class PostgresOutboxStore:
                 .returning(OutboxJob.id)
             )
             return result.scalar_one_or_none() is not None
+
+    async def fail(
+        self,
+        *,
+        job_id: UUID,
+        worker_id: str,
+        error_code: str,
+        retry_at: datetime | None,
+    ) -> OutboxFailureOutcome:
+        stable_error_code = (
+            error_code if _STABLE_ERROR_CODE.fullmatch(error_code) else "internal_error"
+        )
+        async with self._session_factory() as session, session.begin():
+            job = await session.scalar(
+                select(OutboxJob).where(OutboxJob.id == job_id).with_for_update()
+            )
+            if (
+                job is None
+                or job.locked_by != worker_id
+                or job.completed_at is not None
+                or job.dead_lettered_at is not None
+            ):
+                return OutboxFailureOutcome.REJECTED
+            job.last_error = stable_error_code
+            job.locked_by = None
+            job.lock_expires_at = None
+            if retry_at is not None and job.attempt_count < job.max_attempts:
+                job.available_at = retry_at
+                job.dispatched_at = None
+                return OutboxFailureOutcome.RETRY_SCHEDULED
+            job.dead_lettered_at = cast(datetime, await session.scalar(select(func.now())))
+            await append_audit_event(
+                session,
+                aggregate_type="outbox_job",
+                aggregate_id=str(job.id),
+                event_type="outbox.dead_lettered",
+                payload={
+                    "attempt_count": job.attempt_count,
+                    "error_code": stable_error_code,
+                    "job_type": job.job_type,
+                },
+                evidence_source="system",
+            )
+            return OutboxFailureOutcome.DEAD_LETTERED
