@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { gatewayRequest, settings } from "@/server/gateway";
+import { gatewayRequest, merchantBrowserOrigin } from "@/server/gateway";
 
 const name = process.env.NODE_ENV === "production" ? "__Host-ml_operator" : "ml_operator";
 
 export async function POST(request: NextRequest, context: { params: Promise<{ operation: string }> }) {
-  if (request.headers.get("origin") !== settings().merchant) return NextResponse.json({ code: "request_rejected" }, { status: 403 });
+  if (request.headers.get("origin") !== merchantBrowserOrigin()) return NextResponse.json({ code: "request_rejected" }, { status: 403 });
   const { operation } = await context.params;
   if (!["login", "logout"].includes(operation)) return NextResponse.json({}, { status: 404 });
   try {

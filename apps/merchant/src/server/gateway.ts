@@ -13,6 +13,16 @@ export function settings() {
   return { gateway: gateway.origin, merchant: merchant.origin };
 }
 
+export function merchantBrowserOrigin() {
+  const localOrigin = process.env.LOCAL_MERCHANT_URL;
+  if (process.env.NODE_ENV !== "development" || !localOrigin) return settings().merchant;
+  const url = new URL(localOrigin);
+  if (url.protocol !== "http:" || !["localhost", "127.0.0.1"].includes(url.hostname) || url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
+    throw new Error("Invalid local merchant origin");
+  }
+  return url.origin;
+}
+
 export function validCheckout(id: string) {
   return /^chk_[a-zA-Z0-9_-]{1,60}$/.test(id);
 }

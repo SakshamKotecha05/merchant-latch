@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { checkoutRequest, settings, validCheckout } from "@/server/gateway";
+import { checkoutRequest, merchantBrowserOrigin, validCheckout } from "@/server/gateway";
 
 type Context = { params: Promise<{ id: string; operation: string }> };
 
@@ -7,7 +7,7 @@ async function handle(request: NextRequest, context: Context) {
   const { id, operation } = await context.params;
   if (!validCheckout(id)) return NextResponse.json({ code: "checkout_not_found" }, { status: 404 });
   const mutation = request.method === "POST";
-  if (mutation && request.headers.get("origin") !== settings().merchant) {
+  if (mutation && request.headers.get("origin") !== merchantBrowserOrigin()) {
     return NextResponse.json({ code: "merchant_request_rejected" }, { status: 403 });
   }
   if (!(mutation ? ["approve", "confirm", "launch"] : ["review", "status"]).includes(operation)) {

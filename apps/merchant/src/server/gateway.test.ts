@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { cookieName, settings, validCheckout } from "./gateway";
+import { cookieName, merchantBrowserOrigin, settings, validCheckout } from "./gateway";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -67,5 +67,28 @@ describe("merchant gateway boundary", () => {
 
   it("rejects an unsafe checkout identifier before constructing a cookie name", () => {
     expect(() => cookieName("../secret")).toThrowError("Invalid checkout");
+  });
+});
+
+
+describe("local merchant browser origin", () => {
+  it("keeps production origin even when a local override exists", () => {
+    vi.stubEnv("PUBLIC_GATEWAY_URL", "https://gateway.example");
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("PUBLIC_MERCHANT_URL", "https://merchant.example");
+    vi.stubEnv("LOCAL_MERCHANT_URL", "http://localhost:3001");
+    expect(merchantBrowserOrigin()).toBe("https://merchant.example");
+  });
+  it("allows a configured loopback browser while preserving the gateway origin", () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("PUBLIC_MERCHANT_URL", "https://merchant.example");
+    vi.stubEnv("LOCAL_MERCHANT_URL", "http://localhost:3001");
+    expect(merchantBrowserOrigin()).toBe("http://localhost:3001");
+    expect(settings().merchant).toBe("https://merchant.example");
+  });
+  it.each(["http://evil.example", "http://localhost:3001/path", "http://user@localhost:3001"])("rejects unsafe local overrides: %s", (value) => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("LOCAL_MERCHANT_URL", value);
+    expect(() => merchantBrowserOrigin()).toThrow();
   });
 });

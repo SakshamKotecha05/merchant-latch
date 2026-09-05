@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { cookieName, gatewayRequest, settings, validCheckout } from "@/server/gateway";
+import { cookieName, gatewayRequest, merchantBrowserOrigin, validCheckout } from "@/server/gateway";
 
 export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
   if (!validCheckout(id)) return new NextResponse("Checkout not found", { status: 404 });
-  const target = new URL(`/checkout/${id}/review`, settings().merchant);
+  const target = new URL(`/checkout/${id}/review`, merchantBrowserOrigin());
   const response = NextResponse.redirect(target, 303);
   response.headers.set("Cache-Control", "no-store");
   response.headers.set("Referrer-Policy", "no-referrer");
