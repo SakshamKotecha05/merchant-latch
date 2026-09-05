@@ -11,6 +11,7 @@ import {
 
 import type { PurchasePlan } from "../server/planning";
 import { confirmPurchase, planManualPurchase, planPurchase } from "./buyer-actions";
+import { buyerRequestExamples } from "./buyer-flow-content";
 import {
   canSubmitCheckout,
   formatMinorAmount,
@@ -20,11 +21,6 @@ import {
   reduceBuyerFlow,
 } from "./buyer-flow-model";
 import styles from "./buyer-flow.module.css";
-
-const examples = [
-  "One black running shoe in size 42 under INR 3,000",
-  "Two blue cotton shirts in size M under INR 2,500",
-] as const;
 
 const LatchMark = () => (
   <svg aria-hidden="true" viewBox="0 0 32 32" className={styles.mark}>
@@ -293,11 +289,11 @@ function RequestWorkspace(props: {
             rows={5}
             required
             disabled={busy}
-            placeholder="One black running shoe in size 42 under INR 3,000"
+            placeholder={buyerRequestExamples[0]}
           />
         </Field>
         <div className={styles.examples} aria-label="Example requests">
-          {examples.map((example) => (
+          {buyerRequestExamples.map((example) => (
             <button type="button" key={example} onClick={() => props.onPrompt(example)} disabled={busy}>
               {example}
             </button>

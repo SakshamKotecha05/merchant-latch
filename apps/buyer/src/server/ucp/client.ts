@@ -211,7 +211,7 @@ export class UcpCheckoutClient {
     }
     const continueUrl = validatedContinueUrl(
       checkout.data.continue_url,
-      merchant.origin,
+      this.config.publicMerchantUrl.origin,
       checkout.data.status === "requires_escalation",
     );
     return Object.freeze({

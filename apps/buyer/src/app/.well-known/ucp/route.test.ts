@@ -17,6 +17,7 @@ describe("GET /.well-known/ucp", () => {
     process.env.BUYER_SESSION_SECRET = "s".repeat(32);
     process.env.PUBLIC_BUYER_URL = "https://buyer.example";
     process.env.PUBLIC_GATEWAY_URL = "https://gateway.example";
+    process.env.PUBLIC_MERCHANT_URL = "https://merchant.example";
   });
 
   it("publishes only the buyer's compatible public signing key", async () => {

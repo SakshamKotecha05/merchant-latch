@@ -24,6 +24,7 @@ const config: BuyerConfig = {
   sessionSecret: "s".repeat(32),
   publicBuyerUrl: new URL("https://buyer.example/"),
   publicGatewayUrl: new URL("https://gateway.example/"),
+  publicMerchantUrl: new URL("https://merchant.example/"),
 };
 
 const merchantProfile = () => ({
@@ -78,7 +79,7 @@ const checkout = (change: Record<string, unknown> = {}) => ({
       severity: "requires_buyer_review",
     },
   ],
-  continue_url: "https://gateway.example/checkout/chk_1",
+  continue_url: "https://merchant.example/checkout/chk_1",
   ...change,
 });
 
@@ -157,7 +158,7 @@ describe("UcpCheckoutClient", () => {
       ';created=1788523200;keyid="buyer-key-1";expires=1788523500;nonce="123e4567-e89b-42d3-a456-426614174001"',
     );
     expect(result.outcome).toBe("requires_escalation");
-    expect(result.continueUrl).toBe("https://gateway.example/checkout/chk_1");
+    expect(result.continueUrl).toBe("https://merchant.example/checkout/chk_1");
     expect(result.data).toMatchObject({ id: "chk_1", currency: "INR" });
   });
 
@@ -228,8 +229,13 @@ describe("UcpCheckoutClient", () => {
       "merchant_response_invalid",
     ],
     [
+      "gateway-origin continuation",
+      signedResponse(checkout({ continue_url: "https://gateway.example/checkout/chk_1" })),
+      "merchant_response_invalid",
+    ],
+    [
       "non-HTTPS continuation",
-      signedResponse(checkout({ continue_url: "http://gateway.example/checkout/chk_1" })),
+      signedResponse(checkout({ continue_url: "http://merchant.example/checkout/chk_1" })),
       "merchant_response_invalid",
     ],
     [

@@ -10,6 +10,7 @@ const validEnvironment = (): NodeJS.ProcessEnv => ({
   BUYER_SESSION_SECRET: "s".repeat(32),
   PUBLIC_BUYER_URL: "https://buyer.example",
   PUBLIC_GATEWAY_URL: "https://gateway.example",
+  PUBLIC_MERCHANT_URL: "https://merchant.example",
 });
 
 describe("loadBuyerConfig", () => {
@@ -19,6 +20,7 @@ describe("loadBuyerConfig", () => {
     expect(config.geminiModel).toBe("gemini-3.6-flash");
     expect(config.publicBuyerUrl.href).toBe("https://buyer.example/");
     expect(config.publicGatewayUrl.href).toBe("https://gateway.example/");
+    expect(config.publicMerchantUrl.href).toBe("https://merchant.example/");
     expect(Object.isFrozen(config)).toBe(true);
   });
 
@@ -43,6 +45,7 @@ describe("loadBuyerConfig", () => {
     ["PUBLIC_BUYER_URL", "http://buyer.example"],
     ["PUBLIC_GATEWAY_URL", "https://user:pass@gateway.example"],
     ["PUBLIC_GATEWAY_URL", "https://gateway.example/#fragment"],
+    ["PUBLIC_MERCHANT_URL", "http://merchant.example"],
   ])("rejects an invalid %s value", (name, value) => {
     const environment = validEnvironment();
     environment[name] = value;

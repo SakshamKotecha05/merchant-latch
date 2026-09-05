@@ -53,6 +53,7 @@ describe("reference buyer against the FastAPI gateway", () => {
     sessionSecret: "e".repeat(32),
     publicBuyerUrl: new URL("https://buyer.example/"),
     publicGatewayUrl: new URL("https://gateway.example/"),
+    publicMerchantUrl: new URL("https://gateway.example/"),
   };
 
   beforeAll(async () => {
