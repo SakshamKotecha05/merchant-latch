@@ -10,7 +10,7 @@ describe("Gemini intent smoke", () => {
     async () => {
       const extractor = createGeminiIntentExtractor(
         apiKey!,
-        process.env.GEMINI_MODEL ?? "gemini-3.8-flash",
+        process.env.GEMINI_MODEL ?? "gemini-3.6-flash",
       );
       const intent = await extractor.extract(
         "Find one black running shoe in size 42 under INR 3000",

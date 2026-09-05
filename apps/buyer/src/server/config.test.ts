@@ -16,7 +16,7 @@ describe("loadBuyerConfig", () => {
   it("returns normalized configuration with the stable Gemini default", () => {
     const config = loadBuyerConfig(validEnvironment());
 
-    expect(config.geminiModel).toBe("gemini-3.8-flash");
+    expect(config.geminiModel).toBe("gemini-3.6-flash");
     expect(config.publicBuyerUrl.href).toBe("https://buyer.example/");
     expect(config.publicGatewayUrl.href).toBe("https://gateway.example/");
     expect(Object.isFrozen(config)).toBe(true);

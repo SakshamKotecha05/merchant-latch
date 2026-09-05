@@ -8,7 +8,7 @@ const environmentSchema = z
       .min(1)
       .max(128)
       .regex(/^[a-z0-9][a-z0-9._-]*$/)
-      .default("gemini-3.8-flash"),
+      .default("gemini-3.6-flash"),
     UCP_BUYER_PRIVATE_KEY: z.string().min(32).max(16_384),
     UCP_BUYER_KEY_ID: z
       .string()
