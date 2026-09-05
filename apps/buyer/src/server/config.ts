@@ -8,7 +8,7 @@ const environmentSchema = z
       .min(1)
       .max(128)
       .regex(/^[a-z0-9][a-z0-9._-]*$/)
-      .default("gemini-3.8-flash"),
+      .default("gemini-3.5-flash-lite"),
     UCP_BUYER_PRIVATE_KEY: z.string().min(32).max(16_384),
     UCP_BUYER_KEY_ID: z
       .string()
@@ -18,6 +18,7 @@ const environmentSchema = z
     BUYER_SESSION_SECRET: z.string().min(32).max(512),
     PUBLIC_BUYER_URL: z.string().min(1).max(2_048),
     PUBLIC_GATEWAY_URL: z.string().min(1).max(2_048),
+    PUBLIC_MERCHANT_URL: z.string().min(1).max(2_048),
   })
   .passthrough();
 
@@ -29,6 +30,7 @@ export type BuyerConfig = Readonly<{
   sessionSecret: string;
   publicBuyerUrl: URL;
   publicGatewayUrl: URL;
+  publicMerchantUrl: URL;
 }>;
 
 export class BuyerConfigurationError extends Error {
@@ -76,5 +78,6 @@ export const loadBuyerConfig = (environment: NodeJS.ProcessEnv): BuyerConfig => 
     sessionSecret: parsed.data.BUYER_SESSION_SECRET,
     publicBuyerUrl: publicUrl("PUBLIC_BUYER_URL", parsed.data.PUBLIC_BUYER_URL),
     publicGatewayUrl: publicUrl("PUBLIC_GATEWAY_URL", parsed.data.PUBLIC_GATEWAY_URL),
+    publicMerchantUrl: publicUrl("PUBLIC_MERCHANT_URL", parsed.data.PUBLIC_MERCHANT_URL),
   });
 };

@@ -400,12 +400,12 @@ def _seed_demo_catalog() -> None:
         ON CONFLICT (id) DO NOTHING
         """
     )
-    op.get_bind().exec_driver_sql(
-        """
+    op.execute(
+        r"""
         INSERT INTO policy_packs (id, merchant_id, version, rules)
         VALUES (
             '00000000-0000-4000-8000-000000000001', 'merchant_demo', 1,
-            '{"max_quantity_per_line":2,"max_total_quantity":3,"approval_lifetime_seconds":600,"inventory_lease_lifetime_seconds":600,"pickup_charge_minor":0,"tax_inclusive":true,"late_capture_action":"full_refund"}'::jsonb
+            '{"max_quantity_per_line"\:2,"max_total_quantity"\:3,"approval_lifetime_seconds"\:600,"inventory_lease_lifetime_seconds"\:600,"pickup_charge_minor"\:0,"tax_inclusive"\:true,"late_capture_action"\:"full_refund"}'::jsonb
         )
         ON CONFLICT (merchant_id, version) DO NOTHING
         """

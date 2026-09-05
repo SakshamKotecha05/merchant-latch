@@ -1,0 +1,49 @@
+{
+  "request": {
+    "body_hex": "7b22636865636b6f7574223a7b2263757272656e6379223a22494e52222c226c696e655f6974656d73223a5b7b226964223a22736b755f6d65726368616e746c617463685f303031222c227175616e74697479223a317d5d7d7d",
+    "headers": {
+      "content-digest": "sha-256=:Ft8vosjQ7KDcT7NC8CNdx0ELNqleoFq7mc07f+wHh4o=:",
+      "content-length": "90",
+      "content-type": "application/json",
+      "host": "merchant.example",
+      "idempotency-key": "550e8400-e29b-41d4-a716-446655440000",
+      "signature": "sig1=:r1HstsC9mbPDyjE5M7++vInoAbvxNWJBWCP0YmP4UJazFn2zdhotVS+lmOY/HMay/+hMlccgjK1BJcQb6Trw7A==:",
+      "signature-input": "sig1=(\"@method\" \"@authority\" \"@path\" \"ucp-agent\" \"idempotency-key\" \"content-digest\" \"content-type\");created=1768478400;keyid=\"buyer-p256-2026-01\";expires=4072161600;nonce=\"buyer-nonce-phase0-task9\"",
+      "ucp-agent": "profile=\"https://buyer.example/.well-known/ucp\""
+    },
+    "key_id": "buyer-p256-2026-01",
+    "method": "POST",
+    "public_jwk": {
+      "alg": "ES256",
+      "crv": "P-256",
+      "kid": "buyer-p256-2026-01",
+      "kty": "EC",
+      "use": "sig",
+      "x": "axfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpY",
+      "y": "T-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU"
+    },
+    "url": "https://merchant.example/ucp/v1/checkout-sessions"
+  },
+  "response": {
+    "body_hex": "7b22636865636b6f7574223a7b226964223a2263686b5f7068617365305f303031222c22737461747573223a2272656164795f666f725f636f6d706c657465227d7d",
+    "headers": {
+      "content-digest": "sha-256=:stpCTvJog0B9seqxfB3SAgySqQLJ7LpZsYRXOFd0v3o=:",
+      "content-length": "66",
+      "content-type": "application/json",
+      "signature": "sig1=:dqDMcw4/Q3dMYke6aqH2fbI+GBmI+Hli5Z4MOmX6yJGn4UhNyHZ37Q2dQ+IOMZf9+DHwEGt9F8u2JBGeL2190g==:",
+      "signature-input": "sig1=(\"@status\" \"content-digest\" \"content-type\");created=1768478401;keyid=\"merchant-p256-2026-01\";expires=4072161601"
+    },
+    "key_id": "merchant-p256-2026-01",
+    "public_jwk": {
+      "alg": "ES256",
+      "crv": "P-256",
+      "kid": "merchant-p256-2026-01",
+      "kty": "EC",
+      "use": "sig",
+      "x": "fPJ7GI0DT36KUjgDBLUaw8CJaeJ38hs1pgtI_EdmmXg",
+      "y": "B3dVENuO0EApPZrGn3Qw27p9reY86YIpngS3nSJ4c9E"
+    },
+    "request_url": "https://merchant.example/ucp/v1/checkout-sessions",
+    "status_code": 201
+  }
+}

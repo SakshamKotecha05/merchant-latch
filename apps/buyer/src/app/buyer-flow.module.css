@@ -1,10 +1,30 @@
+@font-face {
+  font-family: "Satoshi";
+  src: url("/fonts/Satoshi-Variable.woff2") format("woff2");
+  font-weight: 300 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 :global(*) {
   box-sizing: border-box;
 }
 
 :global(html) {
+  --paper: #f5f8ff;
+  --surface: #ffffff;
+  --ink: #192839;
+  --muted-ink: #40566d;
+  --brand: #305eff;
+  --brand-dark: #2448cc;
+  --brand-soft: #e8efff;
+  --amber: #b65318;
+  --amber-soft: #fff1e7;
+  --rule: #d5deed;
+  --error: #9f2d23;
+
   color-scheme: light;
-  background: #f3f7f6;
+  background: #f5f8ff;
 }
 
 :global(body) {
@@ -12,11 +32,8 @@
   min-width: 320px;
   color: var(--ink);
   background:
-    linear-gradient(rgba(16, 36, 43, 0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(16, 36, 43, 0.035) 1px, transparent 1px),
     var(--paper);
-  background-size: 32px 32px;
-  font-family: "Avenir Next", Avenir, "Segoe UI", sans-serif;
+  font-family: "Satoshi", system-ui, sans-serif;
 }
 
 :global(button),
@@ -26,17 +43,6 @@
 }
 
 .pageShell {
-  --paper: #f3f7f6;
-  --surface: #ffffff;
-  --ink: #10242b;
-  --muted-ink: #53666a;
-  --teal: #176c73;
-  --teal-dark: #0e5057;
-  --pale-teal: #ddecea;
-  --amber: #b65318;
-  --amber-soft: #fff1e7;
-  --rule: #c9d7d5;
-  --error: #9f2d23;
   min-height: 100dvh;
   padding: 0 32px 72px;
 }
@@ -94,7 +100,7 @@
 .eyebrow,
 .docketLabel,
 .errorCode {
-  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-family: "Satoshi", system-ui, sans-serif;
   font-size: 0.73rem;
   font-weight: 700;
   letter-spacing: 0.1em;
@@ -102,10 +108,7 @@
 }
 
 .demoFlag {
-  padding: 8px 12px;
-  color: var(--teal-dark);
-  border: 1px solid var(--teal);
-  border-radius: 999px;
+  color: var(--brand-dark);
   white-space: nowrap;
 }
 
@@ -156,7 +159,7 @@
   background: var(--paper);
   border: 1px solid var(--rule);
   border-radius: 3px;
-  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-family: "Satoshi", system-ui, sans-serif;
 }
 
 .progressCurrent {
@@ -165,19 +168,19 @@
 
 .progressCurrent .progressNode {
   color: #ffffff;
-  background: var(--amber);
-  border-color: var(--amber);
-  box-shadow: 0 0 0 5px var(--amber-soft);
+  background: var(--brand);
+  border-color: var(--brand);
+  box-shadow: 0 0 0 5px var(--brand-soft);
 }
 
 .progressComplete .progressNode {
   color: #ffffff;
-  background: var(--teal);
-  border-color: var(--teal);
+  background: var(--brand);
+  border-color: var(--brand);
 }
 
 .progressComplete:not(:last-child)::after {
-  background: var(--teal);
+  background: var(--brand);
 }
 
 .icon {
@@ -207,13 +210,13 @@
   padding: clamp(28px, 5vw, 64px);
   background: var(--surface);
   border: 1px solid var(--rule);
-  box-shadow: 0 22px 60px rgba(16, 36, 43, 0.08);
+  box-shadow: 0 22px 60px rgba(25, 40, 57, 0.08);
   clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px));
 }
 
 .eyebrow {
   margin: 0 0 18px;
-  color: var(--teal);
+  color: var(--brand);
 }
 
 .statePanel h1 {
@@ -222,7 +225,7 @@
   font-size: clamp(2.25rem, 6vw, 4.8rem);
   font-weight: 650;
   line-height: 0.98;
-  letter-spacing: -0.065em;
+  letter-spacing: -0.045em;
   text-wrap: balance;
 }
 
@@ -267,8 +270,8 @@
   min-height: 48px;
   padding: 13px 15px;
   color: var(--ink);
-  background: #fbfdfc;
-  border: 1px solid #9eb1ae;
+  background: #ffffff;
+  border: 1px solid #899ab2;
   border-radius: 3px;
   outline: none;
   transition: border-color 180ms ease-out, box-shadow 180ms ease-out;
@@ -282,13 +285,13 @@
 
 .field textarea::placeholder,
 .field input::placeholder {
-  color: #718387;
+  color: #63758e;
 }
 
 .field textarea:focus,
 .field input:focus {
-  border-color: var(--teal);
-  box-shadow: 0 0 0 3px rgba(23, 108, 115, 0.2);
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px rgba(48, 94, 255, 0.2);
 }
 
 .field textarea:disabled,
@@ -306,17 +309,21 @@
 
 .examples button {
   min-height: 44px;
-  padding: 9px 13px;
+  padding: 8px 12px;
   color: var(--muted-ink);
-  background: var(--paper);
+  background: transparent;
   border: 1px solid var(--rule);
-  border-radius: 999px;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  text-align: left;
   cursor: pointer;
 }
 
 .examples button:hover:not(:disabled) {
-  color: var(--teal-dark);
-  border-color: var(--teal);
+  color: var(--brand-dark);
+  background: var(--paper);
+  border-color: #899ab2;
 }
 
 .primaryButton,
@@ -335,16 +342,16 @@
   gap: 12px;
   padding: 13px 18px;
   color: #ffffff;
-  background: var(--ink);
-  border: 1px solid var(--ink);
+  background: var(--brand);
+  border: 1px solid var(--brand);
   border-radius: 3px;
   font-weight: 750;
   text-decoration: none;
 }
 
 .primaryButton:hover:not(:disabled) {
-  background: var(--teal-dark);
-  border-color: var(--teal-dark);
+  background: var(--brand-dark);
+  border-color: var(--brand-dark);
   transform: translateY(-1px);
 }
 
@@ -359,16 +366,16 @@
 .secondaryButton {
   width: fit-content;
   padding: 12px 16px;
-  color: var(--teal-dark);
-  background: var(--pale-teal);
-  border: 1px solid var(--teal);
+  color: var(--brand-dark);
+  background: var(--brand-soft);
+  border: 1px solid var(--brand);
   border-radius: 3px;
   font-weight: 700;
 }
 
 .textButton {
   padding: 10px 0;
-  color: var(--teal-dark);
+  color: var(--brand-dark);
   background: transparent;
   border: 0;
   font-weight: 700;
@@ -384,7 +391,7 @@
 .brand:focus-visible,
 .skipLink:focus-visible,
 .acknowledgement:focus-within {
-  outline: 3px solid var(--amber);
+  outline: 3px solid var(--brand);
   outline-offset: 3px;
 }
 
@@ -398,7 +405,7 @@
   margin-top: 18px;
   padding: 22px;
   background: var(--paper);
-  border-left: 3px solid var(--teal);
+  border-left: 3px solid var(--brand);
 }
 
 .manualForm fieldset {
@@ -424,8 +431,7 @@
   top: 24px;
   padding: 28px;
   color: var(--ink);
-  background: var(--pale-teal);
-  border-top: 4px solid var(--teal);
+  background: var(--brand-soft);
 }
 
 .ledger h2 {
@@ -453,14 +459,14 @@
 
 .ledger li .icon {
   flex: 0 0 auto;
-  color: var(--teal);
+  color: var(--brand);
 }
 
 .ledgerBoundary {
   margin: 0;
   padding-top: 22px;
   color: var(--muted-ink);
-  border-top: 1px solid rgba(23, 108, 115, 0.28);
+  border-top: 1px solid rgba(48, 94, 255, 0.28);
   font-size: 0.82rem;
   line-height: 1.6;
 }
@@ -472,7 +478,6 @@
   padding: 18px 20px;
   color: var(--error);
   background: #fff0ed;
-  border-left: 4px solid var(--error);
 }
 
 .error:focus {
@@ -490,7 +495,7 @@
   position: relative;
   margin-top: 32px;
   padding: clamp(22px, 4vw, 34px);
-  background: #f9fbfa;
+  background: #f5f8ff;
   border: 1px solid var(--rule);
 }
 
@@ -520,7 +525,7 @@
 }
 
 .docketLabel {
-  color: var(--teal);
+  color: var(--brand);
 }
 
 .docket h2 {
@@ -531,9 +536,9 @@
 
 .stock {
   padding: 7px 10px;
-  color: var(--teal-dark);
-  background: var(--pale-teal);
-  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  color: var(--brand-dark);
+  background: var(--brand-soft);
+  font-family: "Satoshi", system-ui, sans-serif;
   font-size: 0.75rem;
   font-weight: 700;
   white-space: nowrap;
@@ -564,7 +569,7 @@
 .facts dd {
   margin: 0;
   overflow-wrap: anywhere;
-  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-family: "Satoshi", system-ui, sans-serif;
   font-size: 0.95rem;
   font-variant-numeric: tabular-nums;
 }
@@ -593,7 +598,7 @@
 
 .expiry time {
   color: var(--ink);
-  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-family: "Satoshi", system-ui, sans-serif;
   font-variant-numeric: tabular-nums;
 }
 
@@ -606,13 +611,13 @@
   min-height: 48px;
   display: flex;
   align-items: center;
-  color: var(--teal-dark);
+  color: var(--brand-dark);
   cursor: pointer;
   font-weight: 700;
 }
 
 .alternatives summary:focus-visible {
-  outline: 3px solid var(--amber);
+  outline: 3px solid var(--brand);
   outline-offset: 2px;
 }
 
@@ -632,7 +637,7 @@
 }
 
 .alternatives strong {
-  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-family: "Satoshi", system-ui, sans-serif;
   font-variant-numeric: tabular-nums;
 }
 
@@ -678,9 +683,9 @@
   place-items: center;
   margin-bottom: 26px;
   color: #ffffff;
-  background: var(--teal);
+  background: var(--brand);
   border-radius: 50%;
-  box-shadow: 0 0 0 8px var(--pale-teal);
+  box-shadow: 0 0 0 8px var(--brand-soft);
 }
 
 .verifiedSeal .icon {
@@ -694,8 +699,7 @@
   justify-content: space-between;
   gap: 20px;
   padding: 18px 20px;
-  background: var(--pale-teal);
-  border-left: 4px solid var(--teal);
+  background: var(--brand-soft);
 }
 
 .handoffCard span {
@@ -705,7 +709,7 @@
 }
 
 .handoffCard strong {
-  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-family: "Satoshi", system-ui, sans-serif;
   font-size: 0.88rem;
   text-transform: uppercase;
 }

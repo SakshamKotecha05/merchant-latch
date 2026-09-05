@@ -1,0 +1,21 @@
+{
+  "body_hex": "7b226964223a2263686b5f766563746f72222c22737461747573223a2272657175697265735f657363616c6174696f6e227d",
+  "headers": {
+    "content-digest": "sha-256=:ZcTbuxfbIB50MuIEWZp4rAEqs0Rf5no0EleKJpCXYAE=:",
+    "content-type": "application/json",
+    "signature": "sig1=:Uwpx7w1jvkO1crGpQBr97kDh06WffB3y+dID8iZAObjCsuy0JBmZODZi3kOrMriruVv7rl3S8wFlpQakHxbDYQ==:",
+    "signature-input": "sig1=(\"@status\" \"content-digest\" \"content-type\");created=1788500000;keyid=\"merchant-p256-2026-01\";expires=1788500300"
+  },
+  "key_id": "merchant-p256-2026-01",
+  "now": 1788500010,
+  "public_jwk": {
+    "alg": "ES256",
+    "crv": "P-256",
+    "kid": "merchant-p256-2026-01",
+    "kty": "EC",
+    "use": "sig",
+    "x": "svoziQF_Mja_Gu17N48QpdYwr1iGcueUUCdUfZ1Rzdw",
+    "y": "vViLBQuKHpqots8Qcu27fmFZ3xNDF5a9AYC-jPHItuQ"
+  },
+  "status_code": 201
+}

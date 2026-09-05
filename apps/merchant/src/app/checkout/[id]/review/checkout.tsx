@@ -10,7 +10,7 @@ type RazorpayConstructor = new (options: Record<string, unknown>) => { open(): v
 declare global { interface Window { Razorpay?: RazorpayConstructor } }
 
 const activityLabels: Record<string, string> = {
-  "checkout.created": "Purchase proposed", "checkout.updated": "Purchase details updated",
+  "checkout.created": "Request received", "checkout.updated": "Purchase details updated",
   "checkout.approved": "Purchase approved", "checkout.completed": "Order confirmed",
   "checkout.canceled": "Checkout canceled", "payment_attempt.provider_order_creating": "Payment preparation started",
   "payment_attempt.provider_order_created": "Payment ready", "payment_attempt.paid": "Payment verified",
@@ -42,9 +42,20 @@ function loadCheckout() {
   return checkoutScript;
 }
 
-export default function Checkout({ id }: { id: string }) {
+export default function Checkout({ id, preview }: { id: string; preview?: "approved" | "paid" }) {
   const [review, setReview] = useState<Review | null>(null);
-  const [status, setStatus] = useState<Status | null>(null);
+  const [status, setStatus] = useState<Status | null>(preview ? {
+    status: preview === "paid" ? "completed" : "requires_buyer_review",
+    attempt: { id: "preview", state: preview === "paid" ? "paid" : "awaiting_payment" },
+    pickup: { name: "MerchantLatch Bengaluru", city: "Bengaluru" },
+    lease_expires_at: "2099-01-01T00:00:00Z",
+    order: preview === "paid" ? { id: "DEMO-ORDER", amount: 499900, currency: "INR" } : null,
+    events: [
+      { type: "checkout.created", source: "preview", at: "2026-09-05T13:42:00Z" },
+      { type: "checkout.approved", source: "preview", at: "2026-09-05T13:43:00Z" },
+      ...(preview === "paid" ? [{ type: "payment_attempt.paid", source: "preview", at: "2026-09-05T13:44:00Z" }, { type: "checkout.completed", source: "preview", at: "2026-09-05T13:44:00Z" }] : []),
+    ],
+  } : null);
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -53,6 +64,7 @@ export default function Checkout({ id }: { id: string }) {
   const heading = useRef<HTMLHeadingElement>(null);
 
   async function api(operation: string, body?: object) {
+    if (preview) throw new Error("Actions are disabled in the design preview.");
     const response = await fetch(`/api/checkouts/${id}/${operation}`, { method: body ? "POST" : "GET", cache: "no-store", headers: { "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
     const data = await response.json();
     if (!response.ok) {
@@ -69,6 +81,7 @@ export default function Checkout({ id }: { id: string }) {
   }
 
   useEffect(() => {
+    if (preview) return;
     let active = true;
     async function load() {
       try {
@@ -87,15 +100,15 @@ export default function Checkout({ id }: { id: string }) {
     return () => { active = false; clearInterval(timer); };
     // The checkout id fixes the lifetime of this view.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  }, [id, preview]);
 
   const attemptState = status?.attempt?.state;
   useEffect(() => {
-    if (!attemptState || ["paid", "refunded", "manual_review", "expired", "canceled", "failed"].includes(attemptState)) return;
+    if (preview || !attemptState || ["paid", "refunded", "manual_review", "expired", "canceled", "failed"].includes(attemptState)) return;
     const timer = setInterval(() => { void refresh().catch(() => setNotice("Status updates paused. Use Refresh status to check again.")); }, 3000);
     return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [attemptState, id]);
+  }, [attemptState, id, preview]);
 
   const expired = !!review && Date.parse(review.expires_at) <= clock;
   const leaseActive = !!status?.lease_expires_at && Date.parse(status.lease_expires_at) > clock;
@@ -130,12 +143,16 @@ export default function Checkout({ id }: { id: string }) {
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Payment unavailable."); setBusy(false); }
   }
 
-  return <main id="main"><nav className="rail" aria-label="Checkout progress"><span className="active">01 · Merchant review</span><span className={status?.attempt ? "active" : ""}>02 · You approve</span><span className={paid ? "active" : ""}>03 · Payment verified</span></nav><p className="eyebrow">{paid ? "MERCHANT CONFIRMATION" : "EXACT TERMS. EXPLICIT CONSENT."}</p><h1 ref={heading} tabIndex={-1}>{title}</h1><p className="intro">{paid ? "Razorpay capture and your merchant order are confirmed." : "The merchant checks every purchase detail. You decide whether to continue."}</p>
+  return <main id="main">{preview && <div className="notice" role="status">Design preview · Sample data · Payment actions disabled</div>}<nav className="rail" aria-label="Checkout progress"><ol>{["Merchant review", "You approve", "Payment verified"].map((label, index) => {
+      const current = paid ? 2 : status?.attempt ? 1 : 0;
+      const complete = index < current || paid;
+      return <li key={label} className={complete ? "complete" : index === current ? "current" : ""} aria-current={index === current ? "step" : undefined}><span className="step-marker" aria-hidden="true">{complete ? <svg viewBox="0 0 20 20" fill="none"><path d="m4 10 4 4 8-8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg> : index + 1}</span><span className="step-label">{label}{complete && <span className="sr-only">, completed</span>}</span></li>;
+    })}</ol></nav><p className="eyebrow">{paid ? "MERCHANT CONFIRMATION" : "EXACT TERMS. EXPLICIT CONSENT."}</p><h1 ref={heading} tabIndex={-1}>{title}</h1><p className="intro">{paid ? "Razorpay capture and your merchant order are confirmed." : "The merchant checks every purchase detail. You decide whether to continue."}</p>
     {error && <div className="alert" role="alert">{error}</div>}{notice && <div className="notice" role="status">{notice}</div>}
     <div className="columns"><section className="card">
       {!status && !error && <p role="status">Verifying your private checkout…</p>}
       {review && !status?.attempt && <><div className="section-heading"><h2>Purchase details</h2><span className="badge">Merchant verified</span></div>{review.snapshot.lines.map(line => <article className="line-item" key={line.sku}><div><h3>{line.name}</h3><p>{line.color} · Size {line.size} · Quantity {line.quantity}</p><small>{line.sku}</small></div><strong>{money(line.unitPriceMinor)}<small>each</small></strong></article>)}<dl className="facts"><div><dt>Store pickup</dt><dd>{status?.pickup?.name ?? "Merchant pickup"}<small>{status?.pickup?.city}</small></dd></div><div><dt>Pickup charge</dt><dd>Free</dd></div><div><dt>Tax</dt><dd>Included in price</dd></div></dl><div className="total"><span>Total</span><strong>{money(review.snapshot.pricing.totalMinor)}</strong></div><p className="expiry">{expired ? "Review expired. Start a new checkout in the buyer." : `Review expires in ${Math.max(0, Math.ceil((Date.parse(review.expires_at) - clock) / 1000))} seconds`}</p><label className="consent"><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} disabled={expired || busy} /><span>I approve these exact items, total, and pickup location.</span></label><button onClick={approve} disabled={!confirmed || expired || busy}>{busy ? "Verifying approval…" : "Approve purchase"}</button><p className="hint">Approval reserves stock. Payment opens only on your next explicit action.</p></>}
-      {status?.attempt && <><span className="eyebrow">{paid ? "CONFIRMED" : "MERCHANT STATUS"}</span><h2>{paid ? "Order confirmed for store pickup" : ({draft: "Preparing your payment", provider_order_creating: "Creating your payment order", awaiting_payment: leaseActive ? "Ready when you are" : "Payment window expired", verifying: "Verifying payment", reconciling: "Checking an uncertain result", paid_inventory_exception: "Payment received after stock release", refund_pending: "Refund in progress", refunded: "Refund confirmed", manual_review: "Merchant review needed", expired: "Payment window expired", canceled: "Checkout canceled", failed: "Payment could not proceed"} as Record<string,string>)[attemptState ?? ""] ?? "Checking payment status"}</h2><p>{paid ? `Order ${status.order?.id}` : "We never treat a browser message alone as proof of payment."}</p>{paid && <div className="total"><span>Paid</span><strong>{money(status.order!.amount)}</strong></div>}{["paid_inventory_exception", "refund_pending", "refunded"].includes(attemptState ?? "") && <p>The inventory reservation ended before payment verification. The merchant is following its full-refund policy. Do not pay again.</p>}{attemptState === "awaiting_payment" && leaseActive && <button disabled={busy} onClick={pay}>{busy ? "Checkout open…" : "Open Razorpay test checkout"}</button>}<button className="secondary" onClick={() => { setError(""); void refresh().catch(cause => setError(cause.message)); }}>Refresh status</button></>}
+      {status?.attempt && <><span className="eyebrow">{paid ? "CONFIRMED" : "MERCHANT STATUS"}</span><h2>{paid ? "Order confirmed for store pickup" : ({draft: "Preparing your payment", provider_order_creating: "Creating your payment order", awaiting_payment: leaseActive ? "Ready when you are" : "Payment window expired", verifying: "Verifying payment", reconciling: "Checking an uncertain result", paid_inventory_exception: "Payment received after stock release", refund_pending: "Refund in progress", refunded: "Refund confirmed", manual_review: "Merchant review needed", expired: "Payment window expired", canceled: "Checkout canceled", failed: "Payment could not proceed"} as Record<string,string>)[attemptState ?? ""] ?? "Checking payment status"}</h2><p>{paid ? `Order ${status.order?.id}` : "We never treat a browser message alone as proof of payment."}</p>{paid && <div className="total"><span>Paid</span><strong>{money(status.order!.amount)}</strong></div>}{["paid_inventory_exception", "refund_pending", "refunded"].includes(attemptState ?? "") && <p>The inventory reservation ended before payment verification. The merchant is following its full-refund policy. Do not pay again.</p>}{attemptState === "awaiting_payment" && leaseActive && <button disabled={busy || !!preview} onClick={pay}>{busy ? "Checkout open…" : "Open Razorpay test checkout"}</button>}<button className="secondary" disabled={!!preview} onClick={() => { setError(""); void refresh().catch(cause => setError(cause.message)); }}>Refresh status</button></>}
       {status && !status.attempt && !review && !error && <p>This checkout is {status.status.replaceAll("_", " ")}. Return to the buyer for a new purchase.</p>}
-    </section><aside className="card ledger"><p className="eyebrow">YOUR SAFETY RECORD</p><h2>What happens here</h2><ol><li>Merchant prices and stock are authoritative.</li><li>Your approval binds the exact purchase.</li><li>Razorpay handles payment details.</li><li>The merchant verifies capture before fulfillment.</li></ol><hr /><h3>Checkout activity</h3>{status?.events.length ? <ul className="events">{status.events.map((event, index) => <li key={`${event.at}-${index}`}><strong>{activityLabels[event.type] ?? "Merchant status updated"}</strong><small> {new Date(event.at).toLocaleTimeString()}</small></li>)}</ul> : <p>Verified activity will appear here as the checkout progresses.</p>}</aside></div></main>;
+    </section><aside className="card ledger"><h2>What happens here</h2><ol><li>Merchant prices and stock are authoritative.</li><li>Your approval binds the exact purchase.</li><li>Razorpay handles payment details.</li><li>The merchant verifies capture before fulfillment.</li></ol><hr /><h3>Checkout activity</h3>{status?.events.length ? <ul className="events">{status.events.map((event, index) => <li key={`${event.at}-${index}`}><span className="event-marker" aria-hidden="true" /><div className="event-content"><strong>{activityLabels[event.type] ?? "Merchant status updated"}</strong>{event.type === "checkout.created" && <p>Your selection was sent to the merchant for review.</p>}<time dateTime={event.at} title={new Date(event.at).toLocaleString("en-IN")}>{new Date(event.at).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" })}</time></div></li>)}</ul> : <p>Verified activity will appear here as the checkout progresses.</p>}</aside></div></main>;
 }

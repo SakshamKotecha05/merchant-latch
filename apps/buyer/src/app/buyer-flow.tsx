@@ -19,12 +19,10 @@ import {
   parseMajorAmountToMinor,
   reduceBuyerFlow,
 } from "./buyer-flow-model";
+import { buyerRequestExamples } from "./buyer-flow-content";
 import styles from "./buyer-flow.module.css";
 
-const examples = [
-  "One black running shoe in size 42 under INR 3,000",
-  "Two blue cotton shirts in size M under INR 2,500",
-] as const;
+const examples = buyerRequestExamples;
 
 const LatchMark = () => (
   <svg aria-hidden="true" viewBox="0 0 32 32" className={styles.mark}>
@@ -227,7 +225,6 @@ export function BuyerFlow() {
         </section>
 
         <aside className={styles.ledger} aria-labelledby="ledger-title">
-          <p className={styles.eyebrow}>Safety ledger</p>
           <h2 id="ledger-title">What MerchantLatch checks</h2>
           <ul>
             <li>
@@ -273,11 +270,9 @@ function RequestWorkspace(props: {
   const busy = props.pending === "plan" || props.pending === "manual";
   return (
     <div className={styles.statePanel}>
-      <p className={styles.eyebrow}>Make a safe request</p>
-      <h1>Find the right item. Lock the right terms.</h1>
+      <h1>Tell us what you’re looking for.</h1>
       <p className={styles.lede}>
-        Describe one item, quantity, preferences, and budget. MerchantLatch uses AI only to read
-        your request, then checks every fact against the merchant.
+        Describe the product in your own words. We’ll search the merchant’s store for a match.
       </p>
       <form className={styles.requestForm} onSubmit={props.onSubmit}>
         <Field
@@ -293,7 +288,7 @@ function RequestWorkspace(props: {
             rows={5}
             required
             disabled={busy}
-            placeholder="One black running shoe in size 42 under INR 3,000"
+            placeholder={buyerRequestExamples[0]}
           />
         </Field>
         <div className={styles.examples} aria-label="Example requests">
