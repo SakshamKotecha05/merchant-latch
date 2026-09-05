@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
 
@@ -12,14 +13,18 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
 from acsa.domain.commerce import ApprovalOutcome
+from acsa.ports.jobs import JobDispatcherPort
 from acsa.security.browser_sessions import BrowserAuthorization, require_browser
 from acsa.services.commerce import CommerceService
+
+logger = logging.getLogger(__name__)
 
 
 def create_merchant_checkout_router(
     *,
     commerce_service: CommerceService,
     merchant_public_key: ec.EllipticCurvePublicKey,
+    job_dispatcher: JobDispatcherPort,
     clock: Callable[[], datetime] | None = None,
     authorization: BrowserAuthorization | None = None,
 ) -> APIRouter:
@@ -92,6 +97,13 @@ def create_merchant_checkout_router(
             return _error(422, code)
         if result.response_body is None:
             return _error(500, "approval_unavailable")
+        if result.outbox_job_id is not None:
+            try:
+                await job_dispatcher.dispatch(result.outbox_job_id)
+            except Exception:
+                logger.exception(
+                    "Immediate provider-order dispatch failed; scheduled sweep will retry"
+                )
         return Response(
             content=result.response_body,
             status_code=200,

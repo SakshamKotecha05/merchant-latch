@@ -5,6 +5,16 @@ Policy-locked payments for AI agents.
 MerchantLatch is a merchant-controlled safety gateway for AI-assisted checkout.
 It verifies Razorpay webhooks, records accepted events durably in PostgreSQL, and dispatches recoverable work through Inngest.
 
+## Public Test Mode deployment
+
+- Buyer: [merchantlatch-buyer.vercel.app](https://merchantlatch-buyer.vercel.app)
+- Merchant: [merchantlatch-merchant.vercel.app](https://merchantlatch-merchant.vercel.app)
+- Gateway health: [merchant-latch.vercel.app/health/live](https://merchant-latch.vercel.app/health/live)
+- Gateway UCP discovery: [merchant-latch.vercel.app/.well-known/ucp](https://merchant-latch.vercel.app/.well-known/ucp)
+
+The public flow uses Razorpay Test Mode only.
+No real money moves.
+
 ## Current capabilities
 
 - Constant-time Razorpay webhook signature verification.
@@ -17,6 +27,9 @@ It verifies Razorpay webhooks, records accepted events durably in PostgreSQL, an
 - SSRF-safe buyer profile resolution with persistent trust-on-first-use key pinning.
 - Append-only redacted UCP exchange evidence and a token-protected JSON inspector.
 - Merchant-controlled escalation handoff without creating a payment or order.
+- Single-use merchant continuation exchange into a checkout-bound HttpOnly browser session.
+- Explicit human approval before a Razorpay order or Checkout modal can be opened.
+- Server-side payment verification, exact-once inventory consumption, and one merchant order.
 
 ## Requirements
 
@@ -134,12 +147,13 @@ UCP_BUYER_KEY_ID
 BUYER_SESSION_SECRET
 PUBLIC_BUYER_URL
 PUBLIC_GATEWAY_URL
+PUBLIC_MERCHANT_URL
 ```
 
-`GEMINI_MODEL` defaults to `gemini-3.8-flash`.
+`GEMINI_MODEL` defaults to `gemini-3.6-flash`.
 `UCP_BUYER_PRIVATE_KEY` must be a P-256 private key in PEM format and must never be committed.
 `BUYER_SESSION_SECRET` must be a random secret of at least 32 characters.
-`PUBLIC_BUYER_URL` and `PUBLIC_GATEWAY_URL` must be public HTTPS origins for a complete signed checkout flow.
+`PUBLIC_BUYER_URL`, `PUBLIC_GATEWAY_URL`, and `PUBLIC_MERCHANT_URL` must be public HTTPS origins for a complete signed checkout flow.
 The gateway must be able to fetch `PUBLIC_BUYER_URL/.well-known/ucp` without a redirect.
 
 Start the buyer from the repository root:
@@ -191,7 +205,16 @@ pnpm lint
 pnpm typecheck
 pnpm test
 pnpm --filter merchantlatch-buyer build
+pnpm --filter merchantlatch-merchant build
 ```
+
+Run the tracked-only clean-clone certification when PostgreSQL 17 tools are installed:
+
+```bash
+./scripts/verify-clean-clone.sh
+```
+
+The verifier clones the current committed revision into a temporary directory, creates an isolated PostgreSQL cluster, round-trips every migration, provisions the restricted runtime role, and runs every static check, test suite, and production build.
 
 ## Inspect redacted UCP activity
 
@@ -259,9 +282,16 @@ Operator sessions expire after one hour and are revoked on sign-out.
 
 ### Verification status
 
-The merchant journey has been exercised locally with PostgreSQL and a fake payment provider, including a verified capture and merchant order.
-The isolated PostgreSQL-backed gateway suite passes 345 tests, and the reference buyer passes 147 tests with one live Gemini test skipped.
-The merchant application also has browser-flow, lint, TypeScript, and production-build checks.
+The tracked-only clean-clone verifier passes against PostgreSQL 17.
+It records 346 passing gateway tests, 150 passing buyer tests with one optional live-provider smoke test skipped, and 16 passing merchant tests.
+Gateway Ruff lint, formatting, strict mypy, frontend ESLint, frontend TypeScript, both production builds, and the full migration upgrade, downgrade, and re-upgrade also pass.
+
+The public buyer, merchant, and gateway applications are deployed on Vercel.
+A deployed browser run completed the natural-language request, deterministic catalog match, signed UCP handoff, one-time merchant session exchange, explicit approval, Inngest provider-order creation, Razorpay Test Mode wallet payment, webhook processing, and final merchant confirmation.
+Independent database inspection found checkout status `completed`, payment attempt state `paid`, webhook evidence, a consumed inventory lease, exactly one merchant order, zero remaining reservation, and one sold unit.
+Exactly one `payment.captured` event and one `order.paid` event were stored and processed for that order.
+
+Deployed failure checks also confirmed that cancelled Test Mode payments, a rejected international test card, and an expired inventory lease do not create a merchant order or show a false payment success.
 
 The frozen deterministic held-out language baseline evaluated 50 language cases without Gemini.
 It achieved 76.47% required-constraint exact-field accuracy, 73.53% constraint-satisfying cart accuracy, 66.67% clarification precision, 87.50% clarification recall, a 2.00% parser block rate, and no schema failures.
@@ -280,13 +310,13 @@ A local-only signing bridge then supplied valid ephemeral signatures without byp
 The authenticated capability-scoped core passed 15 tests with two upstream skips, covering discovery, version negotiation, create/get/cancel lifecycle, canceled-state rejection, create/update/cancel idempotency, and total structure.
 The unchanged 77-test full suite passed 19, failed 30, and skipped 28 because it also exercises payment completion and unadvertised discount, buyer-data, fulfillment, order, webhook, and simulation surfaces.
 
-A live `gemini-3.8-flash` run evaluated all 50 frozen held-out language cases through the stateless production client.
+A historical live `gemini-3.8-flash` run evaluated all 50 frozen held-out language cases through the stateless production client.
 Forty-five calls were classified as provider-unavailable under the former five-second production deadline.
 After bounded retries and a longer hard deadline were added, an authorized live smoke request passed; the full 50-case live run was not repeated.
 The resulting low aggregate score is retained as availability-limited evidence and does not establish stable live-model accuracy.
 
-One INR 1.00 Razorpay Test Mode order was created and fetched successfully in `created` state.
-The immediate receipt-filter lookup returned no match, while a later read-only lookup found exactly one match for the same hashed order identifier.
-No payment, capture, or refund was created.
+The deployed buyer now uses `gemini-3.6-flash` because the configured account had exhausted quota for the former model.
+A fresh live extraction smoke check passed with the deployed model.
 
-These results do not establish deployed Razorpay behavior, complete authenticated external UCP conformance, durable scheduling, or production readiness.
+The deployment proves the complete product in Razorpay Test Mode.
+It does not claim live-money certification, complete support for unadvertised optional UCP capabilities, or measured production load capacity.

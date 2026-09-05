@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
+from uuid import UUID
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -24,6 +25,7 @@ from acsa.services.commerce import CommerceService
 from acsa.web.merchant_checkout import create_merchant_checkout_router
 
 NOW = datetime(2026, 9, 4, 12, 0, tzinfo=UTC)
+OUTBOX_JOB_ID = UUID("12345678-1234-5678-1234-567812345678")
 
 
 @pytest.mark.asyncio
@@ -88,10 +90,13 @@ class ApprovalServiceStub:
             ApprovalOutcome.APPROVED,
             attempt_id="att_1",
             response_body=body,
+            outbox_job_id=OUTBOX_JOB_ID,
         )
 
 
-def _route_client() -> tuple[TestClient, ApprovalServiceStub, str]:
+def _route_client(
+    dispatcher: AsyncMock | None = None,
+) -> tuple[TestClient, ApprovalServiceStub, str]:
     private_key = _private_key()
     service = ApprovalServiceStub()
     token = issue_continue_token(
@@ -107,6 +112,7 @@ def _route_client() -> tuple[TestClient, ApprovalServiceStub, str]:
             merchant_public_key=private_key.public_key(),
             clock=lambda: NOW,
             authorization=BrowserAuthorization(Store(), "https://merchant.example"),
+            job_dispatcher=dispatcher or AsyncMock(),
         )
     )
     return (
@@ -159,3 +165,43 @@ def test_review_route_rejects_tampered_session_without_details() -> None:
 
     assert response.status_code == 401
     assert response.json() == {"detail": "merchant_session_required"}
+
+
+def test_fresh_approval_dispatches_provider_order_job_immediately() -> None:
+    dispatcher = AsyncMock()
+    client, service, _ = _route_client(dispatcher)
+
+    response = client.post(
+        "/api/checkouts/chk_1/approve",
+        headers={"Idempotency-Key": "idem-approve-01"},
+        content=json.dumps(
+            {
+                "confirmed": True,
+                "snapshot_checksum": service.snapshot.checksum,
+            }
+        ),
+    )
+
+    assert response.status_code == 200
+    dispatcher.dispatch.assert_awaited_once_with(OUTBOX_JOB_ID)
+
+
+def test_dispatch_failure_keeps_approval_successful_for_sweep_recovery() -> None:
+    dispatcher = AsyncMock()
+    dispatcher.dispatch.side_effect = RuntimeError("Inngest unavailable")
+    client, service, _ = _route_client(dispatcher)
+
+    response = client.post(
+        "/api/checkouts/chk_1/approve",
+        headers={"Idempotency-Key": "idem-approve-01"},
+        content=json.dumps(
+            {
+                "confirmed": True,
+                "snapshot_checksum": service.snapshot.checksum,
+            }
+        ),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"attempt": {"id": "att_1"}, "status": "approved"}
+    dispatcher.dispatch.assert_awaited_once_with(OUTBOX_JOB_ID)

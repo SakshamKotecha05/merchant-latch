@@ -582,6 +582,7 @@ class PostgresCommerceStore:
             )
             session.add(
                 OutboxJob(
+                    id=(outbox_job_id := uuid4()),
                     job_type="create_provider_order",
                     aggregate_type="payment_attempt",
                     aggregate_id=attempt_id,
@@ -608,6 +609,7 @@ class PostgresCommerceStore:
                 ApprovalOutcome.APPROVED,
                 attempt_id=attempt_id,
                 response_body=response_body,
+                outbox_job_id=outbox_job_id,
             )
 
     async def get_checkout(

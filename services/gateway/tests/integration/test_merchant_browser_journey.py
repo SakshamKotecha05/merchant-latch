@@ -19,6 +19,11 @@ from acsa.web.merchant_sessions import create_merchant_session_router
 pytestmark = pytest.mark.integration
 
 
+class NoopDispatcher:
+    async def dispatch(self, job_id):  # type: ignore[no-untyped-def]
+        return None
+
+
 async def setup_journey(session_factory, monkeypatch):
     now = datetime.now(UTC)
     monkeypatch.setattr(fixture, "NOW", now)
@@ -36,7 +41,10 @@ async def setup_journey(session_factory, monkeypatch):
     )
     app.include_router(
         create_merchant_checkout_router(
-            commerce_service=service, merchant_public_key=key.public_key(), authorization=auth
+            commerce_service=service,
+            merchant_public_key=key.public_key(),
+            authorization=auth,
+            job_dispatcher=NoopDispatcher(),
         )
     )
     token = issue_continue_token(key, checkout_id="chk_test_01", checkout_version=1, now=now)

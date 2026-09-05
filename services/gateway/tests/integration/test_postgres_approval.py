@@ -125,6 +125,7 @@ async def test_approval_atomically_reserves_inventory_and_enqueues_one_provider_
 
     assert result.outcome is ApprovalOutcome.APPROVED
     assert result.attempt_id is not None
+    assert result.outbox_job_id is not None
     async with session_factory() as session:
         inventory = await session.get(Inventory, "var_stride_42_black")
         checkout = await session.get(CheckoutSession, "chk_test_01")
@@ -136,6 +137,7 @@ async def test_approval_atomically_reserves_inventory_and_enqueues_one_provider_
         assert await session.scalar(select(func.count()).select_from(OutboxJob)) == 1
         job = await session.scalar(select(OutboxJob))
         assert job is not None and job.max_attempts == 6
+        assert job.id == result.outbox_job_id
 
 
 async def test_duplicate_approval_creates_one_attempt_lease_and_provider_job(

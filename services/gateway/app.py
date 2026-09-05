@@ -75,11 +75,12 @@ def create_runtime_application() -> FastAPI:
         event_key=settings.inngest_event_key.get_secret_value(),
         signing_key=settings.inngest_signing_key.get_secret_value(),
     )
+    job_dispatcher = InngestJobDispatcher(inngest_client, outbox_store)
 
     app = create_application(
         webhook_secret=settings.razorpay_webhook_secret.get_secret_value(),
         webhook_store=webhook_store,
-        job_dispatcher=InngestJobDispatcher(inngest_client, outbox_store),
+        job_dispatcher=job_dispatcher,
         mount_inngest=True,
         inngest_client=inngest_client,
         inngest_functions=[
@@ -94,7 +95,7 @@ def create_runtime_application() -> FastAPI:
             create_outbox_sweep_function(
                 inngest_client,
                 outbox_store,
-                InngestJobDispatcher(inngest_client, outbox_store),
+                job_dispatcher,
             ),
             create_lease_expiry_function(inngest_client, refund_service),
         ],
@@ -156,6 +157,7 @@ def create_runtime_application() -> FastAPI:
             commerce_service=commerce_service,
             merchant_public_key=merchant_private_key.public_key(),
             authorization=browser_authorization,
+            job_dispatcher=job_dispatcher,
         )
     )
     app.include_router(

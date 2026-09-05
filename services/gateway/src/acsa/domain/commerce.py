@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any
+from uuid import UUID
 
 from acsa.domain.canonical import canonical_json_bytes, sha256_checksum
 
@@ -208,6 +209,7 @@ class ApprovalResult:
     attempt_id: str | None = None
     response_body: bytes | None = None
     rule_ids: tuple[str, ...] = ()
+    outbox_job_id: UUID | None = None
 
 
 class CommerceRuleViolation(ValueError):
