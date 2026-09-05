@@ -20,7 +20,7 @@ No real money moves.
 - Constant-time Razorpay webhook signature verification.
 - Idempotent webhook storage and transactional outbox creation.
 - Restricted PostgreSQL runtime role with separate owner credentials for migrations.
-- Outbox dispatch and an Inngest function mounted at `/api/inngest`.
+- Immediate outbox dispatch after approval, with an Inngest sweep as durable recovery.
 - FastAPI liveness endpoint at `/health/live`.
 - Public UCP discovery at `/.well-known/ucp`.
 - Signed UCP checkout creation, standard update, standard cancellation, and retrieval with explicit version negotiation plus durable nonce and idempotency replay protection.
@@ -283,13 +283,14 @@ Operator sessions expire after one hour and are revoked on sign-out.
 ### Verification status
 
 The tracked-only clean-clone verifier passes against PostgreSQL 17.
-It records 346 passing gateway tests, 150 passing buyer tests with one optional live-provider smoke test skipped, and 16 passing merchant tests.
+It records 348 passing gateway tests, 150 passing buyer tests with one optional live-provider smoke test skipped, and 16 passing merchant tests.
 Gateway Ruff lint, formatting, strict mypy, frontend ESLint, frontend TypeScript, both production builds, and the full migration upgrade, downgrade, and re-upgrade also pass.
 
 The public buyer, merchant, and gateway applications are deployed on Vercel.
 A deployed browser run completed the natural-language request, deterministic catalog match, signed UCP handoff, one-time merchant session exchange, explicit approval, Inngest provider-order creation, Razorpay Test Mode wallet payment, webhook processing, and final merchant confirmation.
 Independent database inspection found checkout status `completed`, payment attempt state `paid`, webhook evidence, a consumed inventory lease, exactly one merchant order, zero remaining reservation, and one sold unit.
 Exactly one `payment.captured` event and one `order.paid` event were stored and processed for that order.
+A second deployed browser run verified that approval reached payment-ready state in about four seconds through immediate dispatch, rather than waiting for the one-minute recovery sweep.
 
 Deployed failure checks also confirmed that cancelled Test Mode payments, a rejected international test card, and an expired inventory lease do not create a merchant order or show a false payment success.
 
