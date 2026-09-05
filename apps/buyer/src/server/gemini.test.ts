@@ -12,11 +12,11 @@ const output = JSON.stringify({
 });
 
 describe("GeminiIntentExtractor", () => {
-  it("uses structured output and returns only validated intent", async () => {
+  it("uses bounded Generate Content JSON output and returns only validated intent", async () => {
     const calls: unknown[] = [];
     const client: GeminiInteractionClient = {
-      create: async (request, options) => {
-        calls.push({ request, options });
+      create: async (request) => {
+        calls.push({ request, options: undefined });
         return { output_text: output };
       },
     };
@@ -29,23 +29,23 @@ describe("GeminiIntentExtractor", () => {
       {
         request: expect.objectContaining({
           model: "gemini-3.8-flash",
-          input: "Find two black running shoes under INR 5,000",
-          system_instruction: expect.stringContaining(
-            "Preserve every explicitly stated color, size, budget, and currency.",
-          ),
-          generation_config: { thinking_level: "low", max_output_tokens: 256 },
-          response_format: expect.objectContaining({
-            type: "text",
-            mime_type: "application/json",
-            schema: expect.objectContaining({ type: "object" }),
+          contents: "Find two black running shoes under INR 5,000",
+          config: expect.objectContaining({
+            systemInstruction: expect.stringContaining(
+              "Preserve every explicitly stated color, size, budget, and currency.",
+            ),
+            maxOutputTokens: 256,
+            responseMimeType: "application/json",
+            responseJsonSchema: expect.objectContaining({ type: "object" }),
+            thinkingConfig: { thinkingLevel: "MINIMAL" },
+            abortSignal: expect.any(AbortSignal),
+            httpOptions: expect.objectContaining({
+              timeout: 10_000,
+              retryOptions: expect.objectContaining({ attempts: 3 }),
+            }),
           }),
-          store: false,
         }),
-        options: expect.objectContaining({
-          timeout_ms: 10_000,
-          maxRetries: 2,
-          signal: expect.any(AbortSignal),
-        }),
+        options: undefined,
       },
     ]);
     expect(JSON.stringify(calls)).not.toContain("api-key-sentinel");
@@ -88,12 +88,16 @@ describe("GeminiIntentExtractor", () => {
     const controller = new AbortController();
     let providerSignal: AbortSignal | undefined;
     const client: GeminiInteractionClient = {
-      create: async (_request, options) => {
-        providerSignal = options.signal;
+      create: async (request) => {
+        providerSignal = request.config.abortSignal;
         return await new Promise((_, reject) => {
-          options.signal.addEventListener("abort", () => reject(options.signal.reason), {
-            once: true,
-          });
+          request.config.abortSignal.addEventListener(
+            "abort",
+            () => reject(request.config.abortSignal.reason),
+            {
+              once: true,
+            },
+          );
         });
       },
     };

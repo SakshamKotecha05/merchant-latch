@@ -1,4 +1,4 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 
 import {
   IntentExtractionError,
@@ -10,22 +10,30 @@ import {
 
 export type GeminiInteractionRequest = Readonly<{
   model: string;
-  input: string;
-  system_instruction: string;
-  generation_config: Readonly<{ thinking_level: "low"; max_output_tokens: 256 }>;
-  response_format: Readonly<{
-    type: "text";
-    mime_type: "application/json";
-    schema: Readonly<Record<string, unknown>>;
+  contents: string;
+  config: Readonly<{
+    systemInstruction: string;
+    temperature: 0;
+    maxOutputTokens: 256;
+    responseMimeType: "application/json";
+    responseJsonSchema: Readonly<Record<string, unknown>>;
+    thinkingConfig: Readonly<{ thinkingLevel: ThinkingLevel.MINIMAL }>;
+    abortSignal: AbortSignal;
+    httpOptions: Readonly<{
+      timeout: 10_000;
+      retryOptions: Readonly<{
+        attempts: 3;
+        initialDelay: 0.25;
+        maxDelay: 1;
+        expBase: 2;
+        jitter: 0.2;
+      }>;
+    }>;
   }>;
-  store: false;
 }>;
 
 export interface GeminiInteractionClient {
-  create(
-    request: GeminiInteractionRequest,
-    options: Readonly<{ timeout_ms: 10_000; maxRetries: 2; signal: AbortSignal }>,
-  ): Promise<Readonly<{ output_text?: string }>>;
+  create(request: GeminiInteractionRequest): Promise<Readonly<{ output_text?: string }>>;
 }
 
 const intentJsonSchema = Object.freeze({
@@ -77,20 +85,26 @@ export class GeminiIntentExtractor implements IntentExtractor {
       response = await this.client.create(
         {
           model: this.model,
-          input,
-          system_instruction: systemInstruction,
-          generation_config: { thinking_level: "low", max_output_tokens: 256 },
-          response_format: {
-            type: "text",
-            mime_type: "application/json",
-            schema: intentJsonSchema,
+          contents: input,
+          config: {
+            systemInstruction,
+            temperature: 0,
+            maxOutputTokens: 256,
+            responseMimeType: "application/json",
+            responseJsonSchema: intentJsonSchema,
+            thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL },
+            abortSignal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
+            httpOptions: {
+              timeout: 10_000,
+              retryOptions: {
+                attempts: 3,
+                initialDelay: 0.25,
+                maxDelay: 1,
+                expBase: 2,
+                jitter: 0.2,
+              },
+            },
           },
-          store: false,
-        },
-        {
-          timeout_ms: 10_000,
-          maxRetries: 2,
-          signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
         },
       );
     } catch {
@@ -114,12 +128,9 @@ export const createGeminiIntentExtractor = (
   const client = new GoogleGenAI({ apiKey });
   return new GeminiIntentExtractor(
     {
-      create: async (request, options) => {
-        const response = await client.interactions.create(request, options);
-        if (Symbol.asyncIterator in response) {
-          throw new IntentExtractionError("model_unavailable");
-        }
-        return { output_text: response.output_text };
+      create: async (request) => {
+        const response = await client.models.generateContent(request);
+        return { output_text: response.text };
       },
     },
     model,
