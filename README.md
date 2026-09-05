@@ -1,204 +1,184 @@
 # MerchantLatch
 
-Policy-locked payments for AI agents.
+**AI-assisted shopping. Merchant-controlled terms. Human-approved payments.**
 
-MerchantLatch is a merchant-controlled safety gateway for AI-assisted checkout.
-It verifies Razorpay webhooks, records accepted events durably in PostgreSQL, and dispatches recoverable work through Inngest.
+MerchantLatch turns a shopper’s request into a verified merchant checkout.
+The reference buyer finds a matching sneaker, checks the shopper’s constraints, and hands off signed purchase terms to the merchant.
+The shopper reviews and approves those terms before Razorpay Checkout can open.
 
-## Public Test Mode deployment
+[Try the buyer](https://merchantlatch-buyer.vercel.app) · [Merchant checkout](https://merchantlatch-merchant.vercel.app) · [Gateway health](https://merchant-latch.vercel.app/health/live) · [UCP discovery](https://merchant-latch.vercel.app/.well-known/ucp)
 
-- Buyer: [merchantlatch-buyer.vercel.app](https://merchantlatch-buyer.vercel.app)
-- Merchant: [merchantlatch-merchant.vercel.app](https://merchantlatch-merchant.vercel.app)
-- Gateway health: [merchant-latch.vercel.app/health/live](https://merchant-latch.vercel.app/health/live)
-- Gateway UCP discovery: [merchant-latch.vercel.app/.well-known/ucp](https://merchant-latch.vercel.app/.well-known/ucp)
+> This is a Razorpay Test Mode demo.
+> No real money moves, and the gateway rejects Live Mode keys.
 
-The public flow uses Razorpay Test Mode only.
-No real money moves.
+![MerchantLatch buyer workspace with a shopping request form, purchase progress, and merchant verification checks](docs/images/buyer-workspace.png)
 
-## Current capabilities
+*Actual deployed buyer interface, captured September 5, 2026.*
 
-- Constant-time Razorpay webhook signature verification.
-- Idempotent webhook storage and transactional outbox creation.
-- Restricted PostgreSQL runtime role with separate owner credentials for migrations.
-- Immediate outbox dispatch after approval, with an Inngest sweep as durable recovery.
-- FastAPI liveness endpoint at `/health/live`.
-- Public UCP discovery at `/.well-known/ucp`.
-- Signed UCP checkout creation, standard update, standard cancellation, and retrieval with explicit version negotiation plus durable nonce and idempotency replay protection.
-- SSRF-safe buyer profile resolution with persistent trust-on-first-use key pinning.
-- Append-only redacted UCP exchange evidence and a token-protected JSON inspector.
-- Merchant-controlled escalation handoff without creating a payment or order.
-- Single-use merchant continuation exchange into a checkout-bound HttpOnly browser session.
-- Explicit human approval before a Razorpay order or Checkout modal can be opened.
-- Server-side payment verification, exact-once inventory consumption, and one merchant order.
+## Try it
 
-## Requirements
+1. Open the [reference buyer](https://merchantlatch-buyer.vercel.app).
+2. Choose an example request, such as “One black Stride One in size UK 9 under INR 6,000,” then select **Find merchant match**.
+3. Review the matched product, quantity, price, and budget.
+4. Confirm the terms to follow the verified merchant handoff.
+5. Review and approve the purchase on the merchant site before opening Razorpay Test Mode checkout.
 
-- Python 3.12
-- [uv](https://docs.astral.sh/uv/)
-- Node.js 22 or newer
-- pnpm 11
-- PostgreSQL 17 or newer
-- Razorpay Test Mode credentials (the gateway rejects Live Mode keys)
-- Inngest event and signing keys
+Use **Use exact variant instead** if language extraction is unavailable.
+Start each purchase in the buyer; merchant continuation links are private, expire, and can only be exchanged once.
 
-Docker is optional and can provide PostgreSQL for local development.
+## What it does
 
-## Configure the gateway
+- **Constrained shopping:** Gemini extracts shopping requirements; deterministic catalog checks validate product, quantity, budget, price, and stock.
+- **Signed handoff:** Universal Commerce Protocol (UCP) requests and responses use P-256 signatures, version negotiation, and replay protection.
+- **Explicit consent:** the buyer cannot initiate payment; the merchant requires a current approval snapshot before creating a Razorpay order.
+- **Verified completion:** server-side provider verification, signed webhooks, and transactional writes control payment status, inventory consumption, and merchant order creation.
+- **Recoverable work:** a PostgreSQL transactional outbox dispatches jobs through Inngest, with a periodic recovery sweep.
+- **Operator visibility:** authenticated merchant tools expose checkout states, redacted audit activity, and background work.
 
-Install the locked Python dependencies:
-
-```bash
-cd services/gateway
-uv sync --frozen
-```
-
-Set these environment variables before starting the service:
+## Architecture
 
 ```text
-DATABASE_URL
-DATABASE_DIRECT_URL
-RAZORPAY_KEY_ID
-RAZORPAY_KEY_SECRET
-RAZORPAY_WEBHOOK_SECRET
-INNGEST_EVENT_KEY
-INNGEST_SIGNING_KEY
-UCP_MERCHANT_PRIVATE_KEY
-UCP_MERCHANT_KEY_ID
-UCP_INSPECTOR_TOKEN
-PUBLIC_GATEWAY_URL
-PUBLIC_MERCHANT_URL
+Shopper request
+      |
+      v
+Buyer app (Next.js + Gemini)
+      | signed UCP checkout
+      v
+Gateway (FastAPI + PostgreSQL)
+      | verified continuation
+      v
+Merchant app (Next.js)
+      | explicit shopper approval
+      v
+Gateway + Inngest -> Razorpay Test Mode
+      | provider verification + signed webhooks
+      v
+Recorded payment, inventory update, and merchant order
 ```
 
-`DATABASE_URL` must authenticate as the restricted application role.
-`DATABASE_DIRECT_URL` must authenticate as a different owner role against the same database.
-Do not commit either connection URL or any provider secret.
-`UCP_MERCHANT_PRIVATE_KEY` must contain the merchant's P-256 signing key and must never be committed.
-`UCP_INSPECTOR_TOKEN` must be a random secret of at least 32 characters.
-Buyer signing keys are fetched from the HTTPS profile URL in each signed `UCP-Agent` header and pinned after the first valid request.
-`PUBLIC_GATEWAY_URL` and `PUBLIC_MERCHANT_URL` must be absolute HTTPS URLs in deployed environments.
+| Component | Location | Responsibility |
+| --- | --- | --- |
+| Reference buyer | `apps/buyer` | Request entry, catalog matching, signed checkout handoff |
+| Merchant checkout | `apps/merchant` | Purchase review, consent, payment UI, operator access |
+| Gateway | `services/gateway` | UCP, commerce rules, payment verification, database migrations |
+| Local infrastructure | `infra` | Docker Compose services |
+| Verification | `scripts/verify-clean-clone.sh` | Isolated database checks, tests, and production builds |
 
-## Prepare PostgreSQL
+The frontend uses Next.js 16, React 19, and TypeScript.
+The gateway uses Python 3.12, FastAPI, SQLAlchemy, and PostgreSQL, with Inngest for background work.
 
-Start the local PostgreSQL service from the repository root if needed:
+## Development setup
 
-```bash
-docker compose -f infra/docker-compose.yml up -d postgres
-```
+### Prerequisites
 
-From `services/gateway`, provision the runtime role before applying migrations:
+- Node.js 22 or newer and pnpm **11.19.0** (pinned in `package.json`).
+- Python **3.12** and [uv](https://docs.astral.sh/uv/).
+- PostgreSQL **17 or newer**, or Docker for the included PostgreSQL service.
+- Razorpay **Test Mode** credentials and a webhook secret.
+- Inngest event and signing keys.
+- A Gemini API key for natural-language extraction.
+- Public HTTPS entrypoints for the full signed buyer-to-merchant flow.
 
-```bash
-uv run python -m acsa.adapters.postgres.runtime_role
-uv run alembic upgrade head
-```
+Local HTTP servers can run behind HTTPS development tunnels.
+The gateway requires HTTPS public URLs even when its process runs locally, and it must be able to fetch the buyer’s public profile without redirects.
 
-The bootstrap command is idempotent.
-It grants only the table and sequence privileges required by the gateway and removes schema, temporary-table, role-creation, and migration-owner access from the runtime role.
+### 1. Install dependencies
 
-## Run the gateway
-
-From `services/gateway`, start FastAPI:
-
-```bash
-uv run uvicorn app:app --host 0.0.0.0 --port 8000
-```
-
-Verify the process is live:
-
-```bash
-curl http://localhost:8000/health/live
-```
-
-Expected response:
-
-```json
-{"service":"acsa-gateway","status":"alive"}
-```
-
-Configure Razorpay to send signed events to `/webhooks/razorpay` on the public gateway URL.
-
-## Verify UCP discovery locally
-
-After starting the gateway with valid UCP settings, fetch its profile:
-
-```bash
-curl http://localhost:8000/.well-known/ucp
-```
-
-The response advertises the REST shopping service at `/ucp/shopping` and the `dev.ucp.shopping.checkout` capability.
-Local HTTP is for development only.
-The public profile endpoint must use HTTPS and must not redirect.
-
-## Run the reference buyer
-
-Install the locked workspace dependencies from the repository root:
+From the repository root:
 
 ```bash
 pnpm install --frozen-lockfile
+cd services/gateway
+uv sync --frozen
+cd ../..
 ```
 
-Configure these server-only buyer variables:
+### 2. Configure the services
 
-```text
-GEMINI_API_KEY
-GEMINI_MODEL
-UCP_BUYER_PRIVATE_KEY
-UCP_BUYER_KEY_ID
-BUYER_SESSION_SECRET
-PUBLIC_BUYER_URL
-PUBLIC_GATEWAY_URL
-PUBLIC_MERCHANT_URL
-```
+Use [`.env.example`](.env.example) as a variable reference.
+Keep real credentials in ignored local environment files or your deployment platform’s secret settings.
+A root `.env` is not automatically loaded by all three services.
+Export gateway variables into its shell, and use app-specific `.env.local` files for Next.js.
 
-`GEMINI_MODEL` defaults to `gemini-3.6-flash`.
-`UCP_BUYER_PRIVATE_KEY` must be a P-256 private key in PEM format and must never be committed.
-`BUYER_SESSION_SECRET` must be a random secret of at least 32 characters.
-`PUBLIC_BUYER_URL`, `PUBLIC_GATEWAY_URL`, and `PUBLIC_MERCHANT_URL` must be public HTTPS origins for a complete signed checkout flow.
-The gateway must be able to fetch `PUBLIC_BUYER_URL/.well-known/ucp` without a redirect.
+| Service | Required configuration |
+| --- | --- |
+| Gateway | `DATABASE_URL`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`, `INNGEST_EVENT_KEY`, `INNGEST_SIGNING_KEY`, `UCP_MERCHANT_PRIVATE_KEY`, `UCP_MERCHANT_KEY_ID`, `UCP_INSPECTOR_TOKEN`, `PUBLIC_GATEWAY_URL`, `PUBLIC_MERCHANT_URL` |
+| Database provisioning and migrations | `DATABASE_DIRECT_URL`, plus `DATABASE_URL` for runtime-role provisioning |
+| Buyer | `GEMINI_API_KEY`, `UCP_BUYER_PRIVATE_KEY`, `UCP_BUYER_KEY_ID`, `BUYER_SESSION_SECRET`, `PUBLIC_BUYER_URL`, `PUBLIC_GATEWAY_URL`, `PUBLIC_MERCHANT_URL` |
+| Merchant | `PUBLIC_GATEWAY_URL`, `PUBLIC_MERCHANT_URL` |
+| Optional operator sign-in | `MERCHANT_ADMIN_PASSWORD_HASH` on the gateway |
 
-Start the buyer from the repository root:
+`DATABASE_URL` must use a restricted application role.
+`DATABASE_DIRECT_URL` must use a different owner role against the same database.
+For the included local Docker database, use:
 
 ```bash
+export DATABASE_DIRECT_URL='postgresql+psycopg://acsa_owner:local-only-owner-password@127.0.0.1:5432/acsa'
+export DATABASE_URL='postgresql+psycopg://acsa_runtime:local-only-runtime-password@127.0.0.1:5432/acsa'
+```
+
+These passwords are for local development only.
+Use independent P-256 PEM private keys for `UCP_MERCHANT_PRIVATE_KEY` and `UCP_BUYER_PRIVATE_KEY`, each with its own key ID.
+Generate a key locally with `openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256`, then store its complete multiline output in the appropriate secret variable.
+`UCP_INSPECTOR_TOKEN` and `BUYER_SESSION_SECRET` must each contain at least 32 characters; `openssl rand -hex 32` generates a suitable value.
+Never use `NEXT_PUBLIC_` for these secrets.
+
+`GEMINI_MODEL` is optional and defaults to `gemini-3.5-flash-lite` in the buyer code.
+Set it explicitly if your provider account uses another supported model.
+Use consistent public origins across the three services, without paths, query strings, or embedded credentials.
+The buyer publishes its public signing key at `PUBLIC_BUYER_URL/.well-known/ucp`.
+
+### 3. Prepare the database
+
+From the repository root:
+
+```bash
+docker compose -f infra/docker-compose.yml up -d postgres
+cd services/gateway
+uv run alembic upgrade head
+uv run python -m acsa.adapters.postgres.runtime_role
+cd ../..
+```
+
+Migrations create the schema and demo catalog.
+The idempotent role bootstrap grants the runtime user the required privileges while restricting owner and schema access.
+
+### 4. Start the apps
+
+Run each command in a separate terminal, with that service’s environment configured:
+
+```bash
+# Terminal 1, from services/gateway
+uv run uvicorn app:app --host 0.0.0.0 --port 8000
+```
+
+```bash
+# Terminal 2, from the repository root
 pnpm --filter merchantlatch-buyer dev
 ```
 
-The buyer exposes these server routes:
-
-- `POST /api/buyer/plan` extracts typed shopping constraints and deterministically checks the merchant catalog.
-- `POST /api/buyer/plan/manual` creates the same safe plan from an exact variant selection without Gemini.
-- `POST /api/buyer/checkouts` requires `confirmed: true` and a current confirmation token before sending a signed UCP checkout.
-- `GET /.well-known/ucp` publishes only the buyer's public P-256 key.
-
-Create a natural-language plan:
-
 ```bash
-curl -X POST http://localhost:3000/api/buyer/plan \
-  -H 'Content-Type: application/json' \
-  -d '{"text":"one black running shoe in size 42 under INR 3000"}'
+# Terminal 3, from the repository root
+pnpm --filter merchantlatch-merchant dev
 ```
 
-Use the deterministic manual fallback when language extraction is unavailable:
+The local buyer runs at `http://localhost:3000`, the merchant at `http://localhost:3001`, and the gateway at `http://localhost:8000`.
+For a complete purchase flow, browse through the HTTPS entrypoints configured above.
+Connect Inngest to the gateway’s `/api/inngest` endpoint, and configure Razorpay Test Mode webhooks to reach `/webhooks/razorpay` on the public gateway.
+Background payment work requires a working Inngest connection.
+
+Check gateway liveness:
 
 ```bash
-curl -X POST http://localhost:3000/api/buyer/plan/manual \
-  -H 'Content-Type: application/json' \
-  -d '{"variantId":"<merchant-variant-id>","quantity":1,"budgetMinor":300000,"currency":"INR"}'
+curl http://localhost:8000/health/live
+# {"service":"acsa-gateway","status":"alive"}
 ```
 
-After reviewing the returned merchant terms, submit its confirmation token explicitly:
+Liveness confirms the process is running; it does not certify database or provider connectivity.
 
-```bash
-curl -X POST http://localhost:3000/api/buyer/checkouts \
-  -H 'Content-Type: application/json' \
-  -d '{"confirmationToken":"<token-from-plan>","confirmed":true}'
-```
+## Checks and tests
 
-The buyer re-fetches price, currency, and inventory immediately before checkout.
-It accepts merchant checkout data only after verifying the response signature and UCP schema.
-The buyer handoff stops at `requires_escalation` and returns a verified same-origin merchant continuation URL.
-It does not create a Razorpay order or initiate payment.
-
-Run the workspace quality gates from the repository root:
+Frontend checks, from the repository root:
 
 ```bash
 pnpm lint
@@ -208,116 +188,83 @@ pnpm --filter merchantlatch-buyer build
 pnpm --filter merchantlatch-merchant build
 ```
 
-Run the tracked-only clean-clone certification when PostgreSQL 17 tools are installed:
+Gateway checks, from `services/gateway`:
+
+```bash
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy src
+uv run pytest -q
+```
+
+Gateway integration tests require `TEST_DATABASE_URL` and `TEST_DATABASE_DIRECT_URL` pointing at a dedicated test database; otherwise those tests skip.
+Do not point test configuration at a shared or production database.
+
+For isolated verification of the **current committed revision**, run from the repository root:
 
 ```bash
 ./scripts/verify-clean-clone.sh
 ```
 
-The verifier clones the current committed revision into a temporary directory, creates an isolated PostgreSQL cluster, round-trips every migration, provisions the restricted runtime role, and runs every static check, test suite, and production build.
+This requires local PostgreSQL 17+ command-line tools, including `pg_config`, `initdb`, `pg_ctl`, and `createdb`.
+It creates a temporary checkout and database, checks migration upgrade/downgrade/re-upgrade, provisions the runtime role, and runs static checks, tests, and both production builds.
+Uncommitted changes are not included.
 
-## Inspect redacted UCP activity
+## API and operator access
 
-Operator-only JSON endpoints are available at `/internal/ucp/trust-pins` and `/internal/ucp/exchanges`.
-Send `Authorization: Bearer <UCP_INSPECTOR_TOKEN>` and never expose this token to a browser application.
-Inspector responses contain only bounded redacted metadata and digest values, never raw protocol messages or payment identifiers.
+| Endpoint | Purpose |
+| --- | --- |
+| Gateway `GET /health/live` | Process liveness |
+| Gateway `GET /.well-known/ucp` | Public merchant capabilities and signing keys |
+| Gateway `/ucp/shopping` | Signed checkout create, retrieve, update, and cancel operations |
+| Gateway `POST /webhooks/razorpay` | Verified Razorpay events |
+| Buyer `POST /api/buyer/plan` | Natural-language shopping plan |
+| Buyer `POST /api/buyer/plan/manual` | Deterministic plan from an exact variant |
+| Buyer `POST /api/buyer/checkouts` | Confirmed, signed merchant handoff |
+| Buyer `GET /.well-known/ucp` | Public buyer signing key |
 
-## Run the merchant checkout
+Visit `/operator` on the merchant app for operator sign-in.
+It is disabled unless `MERCHANT_ADMIN_PASSWORD_HASH` contains an Argon2id PHC-encoded password hash on the gateway.
 
-The merchant application is separate from the reference buyer.
-It exchanges a signed continuation once for a checkout-scoped, HttpOnly browser session, then redirects to a clean review URL.
-The merchant gateway checks explicit consent, the exact approval snapshot, expiry, stock, and payment-attempt ownership before allowing payment.
-Razorpay Checkout opens only after the shopper chooses to pay.
-A successful browser callback is verified against provider data; it cannot mark an order paid by itself.
+<details>
+<summary>Generate an operator password hash</summary>
 
-Set these variables on the merchant Next.js server:
-
-```text
-PUBLIC_GATEWAY_URL
-PUBLIC_MERCHANT_URL
-```
-
-Use the same merchant origin on the gateway and merchant application.
-The local merchant UI defaults to `http://127.0.0.1:8000` and `http://localhost:3001` for isolated development.
-The gateway requires HTTPS public origins even when its process runs locally, so a complete signed buyer-to-merchant journey needs HTTPS development entrypoints.
-Production requires HTTPS origins without paths, query parameters, or embedded credentials.
-The merchant application uses Secure, HttpOnly cookies in production and does not expose session credentials to client-side JavaScript.
-
-From the repository root:
+Run from `services/gateway` and store the output as a secret environment value:
 
 ```bash
-pnpm --filter merchantlatch-merchant dev
-```
-
-Open a fresh merchant continuation from the buyer to review and approve a purchase.
-The merchant displays pending verification, expiry, refund, and manual-review states instead of claiming success prematurely.
-A completed checkout exposes a minimal order-confirmation permalink containing only an unguessable order identifier, status, amount, and currency.
-Treat that permalink as private.
-Order confirmation stays in the application; this version collects no email address and sends no confirmation email.
-Payment evidence and the merchant order are recorded atomically with completion, without deferred confirmation or evidence jobs.
-
-### Merchant operator access
-
-Set `MERCHANT_ADMIN_PASSWORD_HASH` on the gateway to an Argon2id PHC-encoded password hash.
-When it is absent, operator sign-in is disabled.
-Generate the hash locally from `services/gateway`; the password is read without echo:
-
-```bash
-uv run python - <<'PY'
+uv run python - <<'PYTHON'
 from getpass import getpass
 from secrets import token_bytes
 from cryptography.hazmat.primitives.kdf.argon2 import Argon2id
+
 password = getpass("Merchant operator password: ").encode()
 if len(password) < 16 or len(password) > 256:
     raise SystemExit("Use a password between 16 and 256 bytes.")
 print(Argon2id(salt=token_bytes(16), length=32, iterations=3,
                lanes=1, memory_cost=65536).derive_phc_encoded(password))
-PY
+PYTHON
 ```
 
-Store the hash as a secret environment value, never in the repository.
-Visit `/operator` on the merchant application to inspect recent checkout states, redacted audit activity, protocol digests, and the background-work queue.
-Sign-in allows five attempts per minute across the single operator account.
-Operator sessions expire after one hour and are revoked on sign-out.
+</details>
 
-### Verification status
+Gateway endpoints `/internal/ucp/trust-pins` and `/internal/ucp/exchanges` provide redacted protocol metadata.
+They require `Authorization: Bearer <UCP_INSPECTOR_TOKEN>`; keep that token server-side.
 
-The tracked-only clean-clone verifier passes against PostgreSQL 17.
-It records 348 passing gateway tests, 150 passing buyer tests with one optional live-provider smoke test skipped, and 16 passing merchant tests.
-Gateway Ruff lint, formatting, strict mypy, frontend ESLint, frontend TypeScript, both production builds, and the full migration upgrade, downgrade, and re-upgrade also pass.
+## Troubleshooting
 
-The public buyer, merchant, and gateway applications are deployed on Vercel.
-A deployed browser run completed the natural-language request, deterministic catalog match, signed UCP handoff, one-time merchant session exchange, explicit approval, Inngest provider-order creation, Razorpay Test Mode wallet payment, webhook processing, and final merchant confirmation.
-Independent database inspection found checkout status `completed`, payment attempt state `paid`, webhook evidence, a consumed inventory lease, exactly one merchant order, zero remaining reservation, and one sold unit.
-Exactly one `payment.captured` event and one `order.paid` event were stored and processed for that order.
-A second deployed browser run verified that approval reached payment-ready state in about four seconds through immediate dispatch, rather than waiting for the one-minute recovery sweep.
+| Symptom | What to check |
+| --- | --- |
+| Gateway rejects startup configuration | Required variables are exported, the Razorpay key starts with `rzp_test_`, and public gateway/merchant URLs use HTTPS |
+| Signed handoff fails | Buyer discovery is reachable over HTTPS without redirects, signing keys match their published profiles, and all public origins agree |
+| Gemini is unavailable | Check API quota and `GEMINI_MODEL`, or choose the exact-variant fallback |
+| Payment stays pending after approval | Check Inngest connectivity and the operator background-work queue |
+| Payment is awaiting verification | Check Razorpay webhook delivery and server-side provider verification |
+| Checkout link is expired or already used | Start a fresh handoff from the buyer |
 
-Deployed failure checks also confirmed that cancelled Test Mode payments, a rejected international test card, and an expired inventory lease do not create a merchant order or show a false payment success.
+## Scope and limitations
 
-The frozen deterministic held-out language baseline evaluated 50 language cases without Gemini.
-It achieved 76.47% required-constraint exact-field accuracy, 73.53% constraint-satisfying cart accuracy, 66.67% clarification precision, 87.50% clarification recall, a 2.00% parser block rate, and no schema failures.
-
-The separate PostgreSQL-backed held-out safety run evaluated all 50 frozen scenario cases through local production boundaries.
-It recorded no injection escapes and no captured-payment counter mismatches.
-It recorded three conservative provider-order counter mismatches for malformed provider POST responses and seven conflicts with the corpus's blanket no-provider-actuation label.
-Four of those actuation conflicts occur in reliability fixtures that also expect a provider artifact, so the result is retained as an evaluation-contract limitation rather than presented as a production safety pass.
-
-A redacted Ed25519 evidence bundle containing both final reports and their freeze manifests verifies offline.
-Independent altered-file and wrong-key checks reject the bundle as expected.
-
-Pinned external UCP conformance was run locally against the production router boundary.
-The raw suite's placeholder request signature was correctly rejected by MerchantLatch's mandatory P-256 authentication.
-A local-only signing bridge then supplied valid ephemeral signatures without bypassing production verification.
-The authenticated capability-scoped core passed 15 tests with two upstream skips, covering discovery, version negotiation, create/get/cancel lifecycle, canceled-state rejection, create/update/cancel idempotency, and total structure.
-The unchanged 77-test full suite passed 19, failed 30, and skipped 28 because it also exercises payment completion and unadvertised discount, buyer-data, fulfillment, order, webhook, and simulation surfaces.
-
-A historical live `gemini-3.8-flash` run evaluated all 50 frozen held-out language cases through the stateless production client.
-Forty-five calls were classified as provider-unavailable under the former five-second production deadline.
-After bounded retries and a longer hard deadline were added, an authorized live smoke request passed; the full 50-case live run was not repeated.
-The resulting low aggregate score is retained as availability-limited evidence and does not establish stable live-model accuracy.
-
-The deployed buyer now uses `gemini-3.6-flash` because the configured account had exhausted quota for the former model.
-A fresh live extraction smoke check passed with the deployed model.
-
-The deployment proves the complete product in Razorpay Test Mode.
-It does not claim live-money certification, complete support for unadvertised optional UCP capabilities, or measured production load capacity.
+The demo supports the advertised UCP checkout capability, not every optional UCP extension.
+It is not live-money certified, and production load capacity has not been established.
+Language-model extraction depends on provider availability; deterministic checks still govern the accepted cart.
+Order confirmation appears in the application; this version does not collect email addresses or send confirmation emails.
+Treat order-confirmation permalinks as private.

@@ -27,5 +27,12 @@ test-results/
 *.p12
 *.csv
 evidence/private/
-*.md
-!README.md
+# Keep internal notes and agent artifacts local. Only the root README is public.
+*.[mM][dD]
+*.[mM][aA][rR][kK][dD][oO][wW][nN]
+!/README.md
+.[aA][gG][eE][nN][tT][sS]/
+.[cC][lL][aA][uU][dD][eE]/
+.[cC][oO][dD][eE][xX]/
+.gstack/
+docs/plans/
