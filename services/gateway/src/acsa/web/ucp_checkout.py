@@ -204,9 +204,7 @@ def create_ucp_checkout_router(
                 started_at,
                 _mutation_outcome(existing, response),
                 buyer=buyer,
-                checkout_id=(
-                    existing.checkout.id if existing.checkout is not None else None
-                ),
+                checkout_id=(existing.checkout.id if existing.checkout is not None else None),
             )
             return response
         try:
@@ -317,9 +315,7 @@ def create_ucp_checkout_router(
             )
             return existing
         if existing is not None:
-            response = _mutation_response(
-                existing, request, merchant_private_key, merchant_key_id
-            )
+            response = _mutation_response(existing, request, merchant_private_key, merchant_key_id)
             await _record_exchange(
                 protocol_store,
                 request,
@@ -475,9 +471,7 @@ def create_ucp_checkout_router(
             )
             return existing
         if existing is not None:
-            response = _mutation_response(
-                existing, request, merchant_private_key, merchant_key_id
-            )
+            response = _mutation_response(existing, request, merchant_private_key, merchant_key_id)
             await _record_exchange(
                 protocol_store,
                 request,
@@ -744,8 +738,7 @@ def _mutation_response(
         return _error(500, "checkout_unavailable", "The checkout is unavailable.")
     status_code = (
         created_status
-        if result.outcome
-        in {CommerceMutationOutcome.CREATED, CommerceMutationOutcome.REPLAYED}
+        if result.outcome in {CommerceMutationOutcome.CREATED, CommerceMutationOutcome.REPLAYED}
         else 200
     )
     return _signed_response(result.response_body, status_code, request, private_key, key_id)

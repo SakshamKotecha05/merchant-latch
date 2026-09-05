@@ -376,7 +376,10 @@ def _parse_profile_item(ucp_agent: str) -> Item:
 
 def parse_profile_url(ucp_agent: str) -> str:
     profile = _parse_profile_item(ucp_agent)
-    canonical, _ = _canonical_profile_url(profile.value)
+    value = profile.value
+    if not isinstance(value, str):
+        raise BuyerProfileError("profile_invalid")
+    canonical, _ = _canonical_profile_url(value)
     return canonical
 
 
