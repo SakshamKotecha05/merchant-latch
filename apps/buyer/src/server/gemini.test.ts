@@ -32,7 +32,7 @@ describe("GeminiIntentExtractor", () => {
           contents: "Find two black running shoes under INR 5,000",
           config: expect.objectContaining({
             systemInstruction: expect.stringContaining(
-              "Preserve every explicitly stated color, size, budget, and currency.",
+              "exclude quantity words, color, size, budget, and currency",
             ),
             maxOutputTokens: 256,
             responseMimeType: "application/json",

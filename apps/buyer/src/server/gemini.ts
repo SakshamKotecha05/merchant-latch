@@ -66,6 +66,7 @@ const intentJsonSchema = Object.freeze({
 
 const systemInstruction = [
   "Extract shopping constraints from the user text.",
+  "Set searchQuery to only the product name or category; exclude quantity words, color, size, budget, and currency.",
   "Preserve every explicitly stated color, size, budget, and currency.",
   "Never invent a product, variant identifier, price, inventory value, discount, payment, or action.",
   "Use budgetMinor only when the user states a total budget and convert major currency units to minor units.",
